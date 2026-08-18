@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Android 11+ package visibility for dynamic launcher-app discovery. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <!-- Network / web research / optional AI endpoint -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Camera -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Vibration -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Voice assistant -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Android 13+ notifications for reminders and proactive NOVA events -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Allows NOVA to restore an explicitly enabled hands-free mode after reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Needed only if NOVA is granted exact alarm capability; normal reminders use inexact alarms. -->
+
+    <!-- Foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!-- Android 14+ camera foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+
+    <!-- Android 14+ microphone foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <application
+        android:allowBackup="true"
+        android:label="NOVA"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@style/AppTheme">
+
+        <!-- Main Activity -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+        <receiver
+            android:name=".NovaReminderReceiver"
+            android:exported="false" />
+
+        <!-- Restores user-enabled hands-free mode after reboot when Android permits microphone FGS startup. -->
+        <receiver
+            android:name=".NovaBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Optional hands-free voice foreground service -->
+        <service
+            android:name=".NovaVoiceService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- Camera Gesture Foreground Service -->
+        <service
+            android:name=".CameraGestureService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
+
+        <!-- Optional notification bridge -->
+        <service
+            android:name=".NovaNotificationListenerService"
+            android:label="NOVA Notification Access"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- Accessibility Gesture Service -->
+        <service
+            android:name=".GestureAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+
+        </service>
+
+    </application>
+
+</manifest>

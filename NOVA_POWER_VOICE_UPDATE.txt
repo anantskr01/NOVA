@@ -1,0 +1,18 @@
+NOVA POWER + ALWAYS-LISTENING VOICE UPDATE
+
+Changes:
+- Camera gesture processing reduced from ~30 FPS to ~15 FPS.
+- Requests a 15 FPS camera range when the device exposes a compatible range.
+- Reduced fingertip movement gain and increased smoothing/dead-zone to reduce jitter and unnecessary accessibility gestures.
+- Increased movement dispatch interval to reduce Android gesture churn.
+- Voice service now uses a guarded restart loop so it does not create overlapping SpeechRecognizer sessions.
+- Voice service remains a foreground microphone service while hands-free is enabled and automatically restarts recognition after normal results/errors.
+- Wake phrase remains: "Hey NOVA", "NOVA", or "NOVA ...".
+
+Important Android limitation:
+SpeechRecognizer is session-based. This is a best-effort always-listening mode, not a hardware-level hotword detector. Android may end a recognition session, and the service then restarts it. Continuous microphone use will still consume battery.
+
+Build note:
+The provided environment could not download Gradle 8.9 because outbound network access was unavailable. Build this project on the user's PC with:
+  .\\gradlew.bat clean
+  .\\gradlew.bat assembleDebug

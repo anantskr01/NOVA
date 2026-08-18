@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<resources>
+
+    <string name="app_name">NOVA</string>
+
+    <string name="accessibility_description">
+        NOVA uses accessibility gestures to control the tablet with hand movements.
+    </string>
+
+</resources>

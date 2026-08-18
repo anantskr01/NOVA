@@ -1,0 +1,304 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/nova_background"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:text="NOVA"
+            android:textColor="#8DEBFF"
+            android:textSize="44sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.18" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="8dp"
+            android:text="NEURAL • ORIENTATION • VISION • ASSISTANT"
+            android:textColor="#5B8B99"
+            android:textSize="10sp"
+            android:letterSpacing="0.08" />
+
+        <com.aircontrol.NovaHudView
+            android:id="@+id/novaHud"
+            android:layout_width="match_parent"
+            android:layout_height="230dp"
+            android:layout_marginTop="2dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/nova_panel"
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/statusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="NOVA • CORE ONLINE"
+                android:textColor="#8DEBFF"
+                android:textSize="17sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/handStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="VISION • FINGER CONTROL ACTIVE"
+                android:textColor="#A9C4CC"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/assistantStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="ASSISTANT • READY"
+                android:textColor="#A9C4CC"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="vertical"
+            android:background="@drawable/nova_panel"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="COMMAND CORE"
+                android:textColor="#8DEBFF"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08" />
+
+            <EditText
+                android:id="@+id/commandInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:hint="Tell NOVA what to do…"
+                android:singleLine="true"
+                android:inputType="text"
+                android:textColor="#D9F7FF"
+                android:textColorHint="#5B8B99"
+                android:backgroundTint="#4FAEC2" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/micButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="MIC" />
+
+                <Button
+                    android:id="@+id/executeButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:text="EXECUTE" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/readScreenButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="7dp"
+                android:text="READ CURRENT SCREEN" />
+
+            <Button
+                android:id="@+id/handsFreeButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="START HANDS-FREE • HEY NOVA" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="vertical"
+            android:background="@drawable/nova_panel"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="AI CORE"
+                android:textColor="#8DEBFF"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08" />
+
+            <EditText
+                android:id="@+id/aiEndpointInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="9dp"
+                android:hint="OpenAI-compatible endpoint"
+                android:inputType="textUri"
+                android:textColor="#D9F7FF"
+                android:textColorHint="#5B8B99"
+                android:singleLine="true" />
+
+            <EditText
+                android:id="@+id/aiModelInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="7dp"
+                android:hint="Model"
+                android:inputType="text"
+                android:textColor="#D9F7FF"
+                android:textColorHint="#5B8B99"
+                android:singleLine="true" />
+
+            <EditText
+                android:id="@+id/aiKeyInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="7dp"
+                android:hint="API key • stored in Android Keystore"
+                android:inputType="textPassword"
+                android:textColor="#D9F7FF"
+                android:textColorHint="#5B8B99"
+                android:singleLine="true" />
+
+            <Button
+                android:id="@+id/saveAiButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="9dp"
+                android:text="SAVE AI CORE" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="vertical"
+            android:background="@drawable/nova_panel"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SKILLS • ACTION ENGINE"
+                android:textColor="#8DEBFF"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.06" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="9dp"
+                android:text="Calculator • timers • reminders • calendar • maps • files • Wi‑Fi • Bluetooth • battery • device info • web research • dynamic app discovery • accessibility actions"
+                android:textColor="#B8CCD2"
+                android:textSize="13sp"
+                android:lineSpacingExtra="3dp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="vertical"
+            android:background="@drawable/nova_panel"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SYSTEM ACCESS"
+                android:textColor="#8DEBFF"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08" />
+
+            <Button
+                android:id="@+id/accessibilityButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="9dp"
+                android:text="OPEN ACCESSIBILITY SETTINGS" />
+
+            <Button
+                android:id="@+id/notificationButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="OPEN NOTIFICATION ACCESS" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="9dp"
+                android:text="Camera, microphone, notifications and accessibility are controlled by Android. NOVA never bypasses protected system security."
+                android:textColor="#8FAAB2"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="vertical"
+            android:background="@drawable/nova_panel"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="VISION CONTROL"
+                android:textColor="#8DEBFF"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="9dp"
+                android:text="INDEX FINGER → smooth direct movement\n\nLEFT / RIGHT → horizontal navigation\nUP / DOWN → smooth scrolling"
+                android:textColor="#B8CCD2"
+                android:textSize="14sp"
+                android:lineSpacingExtra="4dp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="24dp"
+            android:text="NOVA 2.0 • CORE ONLINE"
+            android:textColor="#3C7380"
+            android:textSize="11sp"
+            android:letterSpacing="0.1" />
+    </LinearLayout>
+</ScrollView>

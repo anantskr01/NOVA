@@ -1,0 +1,79 @@
+NOVA FINAL POLISHED — NECESSARY CORE UPGRADE
+============================================
+
+Base:
+- AirControl NOVA 2.0 project
+
+Included core capabilities:
+- Finger gesture control using MediaPipe
+- Accessibility-based touch/scroll control
+- Hands-free voice service with Hey NOVA wake gate
+- Natural voice command handling and spoken responses
+- Central action engine
+- Dynamic installed-app discovery
+- Notification listener bridge
+- Built-in skills (calculator, timers, reminders, maps, files, device info, Wi-Fi/Bluetooth)
+- Futuristic native NOVA HUD
+- Android Keystore-backed API-key storage
+
+Necessary upgrades added in this final polish:
+1. Bounded autonomous agent planner
+   - AI JSON plans are executed through one controlled action path
+   - Maximum 8 steps per plan
+   - One bounded retry for transient action failures
+   - Post-plan accessibility UI sanity snapshot
+   - No permission/security bypasses
+
+2. Better screen understanding
+   - Structured accessibility UI snapshot
+   - Text/content-description, class, clickable state and screen bounds
+   - Numbered visible-item activation support (for example, tap the 2nd visible item)
+   - AI receives a current UI snapshot when planning
+
+3. Persistent user-controlled memory
+   - Local conversation history
+   - Named facts using: "remember <value> as <key>"
+   - "what do you remember"
+   - "forget everything" / "clear memory"
+   - Memory is local to the tablet
+
+4. Natural voice foundation retained
+   - Wake gate
+   - Active follow-up listening window
+   - Duplicate phrase suppression
+   - Stop hands-free service
+
+5. Advanced automation
+   - Multi-step natural-language plans
+   - App discovery and launch
+   - UI text activation
+   - Numbered UI item activation
+   - Web/search/settings/device actions
+
+6. Performance polish
+   - Camera inference capped around 30 FPS
+   - Existing 320x240 camera input retained
+   - Finger movement smoothing and rate limiting
+   - Bounded accessibility movement queue
+   - Fixed FRAME_INTERVAL compile issue in CameraGestureService
+
+7. Build modernization
+   - Android Gradle Plugin 8.7.3
+   - Gradle wrapper 8.9
+   - compileSdk 35 / targetSdk 35
+   - versionCode 3 / versionName 3.0
+
+IMPORTANT LIMITATIONS
+---------------------
+- Android's security model remains enforced.
+- Accessibility cannot read private data from apps that do not expose it.
+- Screen understanding is based on Android Accessibility UI metadata; this is not unrestricted visual OCR/vision of every pixel.
+- A normal Android app cannot silently bypass permissions, authentication, protected settings, or another app's private data.
+- This environment could not download the Gradle 8.9 distribution, so a local Gradle build was not possible here.
+
+Recommended PC build:
+    .\gradlew.bat clean
+    .\gradlew.bat assembleDebug
+
+APK:
+    app\build\outputs\apk\debug\app-debug.apk

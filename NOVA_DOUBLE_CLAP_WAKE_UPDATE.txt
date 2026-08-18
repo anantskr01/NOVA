@@ -1,0 +1,15 @@
+NOVA DOUBLE-CLAP WAKE UPDATE
+
+Added double-clap wake detection to NovaVoiceService.
+
+Behavior:
+- Two sharp microphone RMS peaks within about 1.1 seconds wake NOVA.
+- A short 180 ms debounce prevents one clap from being counted twice.
+- Detection uses SpeechRecognizer's existing onRmsChanged callback, so NOVA does not open a second competing microphone stream.
+- On detection, NOVA enters the same wake state as the voice wake phrase, plays the existing wake tone, and shows the existing NOVA wake overlay.
+- After waking, the normal voice command window remains active.
+
+Notes:
+- Detection is adaptive to the recent microphone noise floor.
+- Exact sensitivity depends on the device microphone and Android speech-recognition provider.
+- Android background microphone restrictions still apply.

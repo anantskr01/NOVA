@@ -1,0 +1,17 @@
+NOVA FINAL POLISH PASS
+======================
+
+This build contains the current NOVA/AirControl polish pass:
+
+1. MediaPipe Hand Landmarker switched from IMAGE mode to VIDEO mode so consecutive frames can use MediaPipe tracking instead of re-running the full palm detector on every frame.
+2. Finger movement thresholds and smoothing were tuned for lower-latency index-fingertip control.
+3. Accessibility finger movement is now queued so overlapping dispatchGesture() calls do not constantly reject each other.
+4. Finger gesture duration was reduced for more responsive movement.
+5. Accessibility display-size code continues to use DisplayMetrics and avoids the previous getDisplay() crash path.
+6. NOVA main screen received a dark futuristic HUD-style polish.
+
+Important:
+- The project could not be Gradle-built in this environment because the Gradle wrapper distribution (Gradle 8.7) is not cached here and external downloads are unavailable.
+- Build and install it on the Windows development machine with the existing Gradle/Android SDK setup.
+- After installing, keep NOVA's Accessibility Service enabled.
+- This pass targets smoother finger-controlled touch/scroll simulation. Android AccessibilityService does not expose a general-purpose hardware cursor API, so the effect remains simulated touch gestures rather than a true system mouse pointer.

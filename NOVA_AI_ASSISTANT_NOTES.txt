@@ -1,0 +1,20 @@
+NOVA AI ASSISTANT LAYER
+=======================
+
+Added:
+- NovaAssistant.java: local command/tool router with text-to-speech responses.
+- Android SpeechRecognizer microphone control in MainActivity.
+- Text command box + EXECUTE button.
+- Voice permission handling (RECORD_AUDIO).
+- Accessibility global actions: Home, Back, Recents.
+- Gesture commands: scroll/swipe left/right/up/down.
+- App launching for YouTube, Chrome/browser, Settings and calculator fallback.
+- Web search intent for "search for ...", "search ...", and "google ...".
+- Time/date commands.
+- Futuristic NOVA command-core UI.
+
+This is a local assistant/tool layer, not unrestricted system control. Android security boundaries remain in place.
+
+Build note:
+The project could not be Gradle-built in this environment because Gradle 8.7 was not cached and external network access is unavailable. Build on the development PC with:
+  .\gradlew.bat assembleDebug
