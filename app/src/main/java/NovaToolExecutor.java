@@ -18,7 +18,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
-/** Executes bounded web, memory and local-workspace tools for NOVA. */
+/** Executes bounded web, memory, app-discovery and local-workspace tools for NOVA. */
 public final class NovaToolExecutor {
     private static final String TAG = "NovaToolExecutor";
     private static final int CONNECT_TIMEOUT_MS = 8000;
@@ -26,15 +26,18 @@ public final class NovaToolExecutor {
     private static final int MAX_RESPONSE_CHARS = 30000;
     private static final int MAX_FILE_CHARS = 100000;
     private static final int MAX_REDIRECTS = 4;
+    private static final int MAX_APPS_CHARS = 12000;
 
     private final File workspace;
     private final NovaMemory memory;
+    private final NovaAppCatalog apps;
 
     public NovaToolExecutor(Context context) {
         Context app = context.getApplicationContext();
         workspace = new File(app.getFilesDir(), "nova-workspace");
         if (!workspace.exists()) workspace.mkdirs();
         memory = new NovaMemory(app);
+        apps = new NovaAppCatalog(app);
     }
 
     public String execute(String type, String value) {
@@ -47,6 +50,7 @@ public final class NovaToolExecutor {
                 case "search": return search(value);
                 case "memory.remember": return remember(value);
                 case "memory.recall": return recall(value);
+                case "apps.list": return listApps(value);
                 case "files.read": return readFile(value);
                 case "files.write": return writeFile(value, false);
                 case "files.create": return writeFile(value, true);
@@ -81,6 +85,15 @@ public final class NovaToolExecutor {
         return result == null || result.trim().isEmpty() ? "MEMORY • NO MATCHES" : result;
     }
 
+    private String listApps(String value) {
+        int max = 80;
+        try {
+            if (value != null && !value.trim().isEmpty()) max = Math.max(1, Math.min(200, Integer.parseInt(value.trim())));
+        } catch (NumberFormatException ignored) { }
+        String result = apps.launchableSummary(max);
+        return result.length() > MAX_APPS_CHARS ? result.substring(0, MAX_APPS_CHARS) : result;
+    }
+
     private String search(String query) throws Exception {
         if (TextUtils.isEmpty(query)) return null;
         return fetch("https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(query.trim(), "UTF-8"));
@@ -95,7 +108,6 @@ public final class NovaToolExecutor {
             if (!("https".equals(scheme) || "http".equals(scheme))) return null;
             if (uri.getUserInfo() != null) return null;
             if (isBlockedHost(uri.getHost())) return "WEB • BLOCKED PRIVATE/LOCAL ADDRESS";
-
             HttpURLConnection connection = (HttpURLConnection) new URL(current).openConnection();
             connection.setRequestMethod("GET");
             connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
