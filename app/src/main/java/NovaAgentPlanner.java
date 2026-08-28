@@ -1,23 +1,39 @@
 package com.aircontrol;
 
-import android.content.Context;
 import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Bounded autonomous planner for NOVA.
- * It turns an AI JSON plan into a validated list of actions without ever
- * bypassing Android permissions. Execution remains owned by NovaActionEngine.
+ *
+ * The AI proposes actions; this class validates and executes only a small
+ * allow-list. Android permissions and capabilities remain the authority.
  */
 public final class NovaAgentPlanner {
+
     private static final String TAG = "NovaAgentPlanner";
     private static final int MAX_STEPS = 8;
     private static final int MAX_RETRIES = 1;
+
+    private static final Set<String> ALLOWED = new HashSet<>();
+
+    static {
+        String[] types = {
+                "home", "back", "recents", "notifications", "quick_settings",
+                "scroll_up", "scroll_down", "swipe_left", "swipe_right",
+                "open_url", "open_package", "open_app", "click_text", "click_index",
+                "search", "read_screen", "settings", "none"
+        };
+        for (String type : types) ALLOWED.add(type);
+    }
 
     public interface ActionExecutor {
         boolean execute(String type, String value);
@@ -46,6 +62,7 @@ public final class NovaAgentPlanner {
 
             String say = plan.optString("say", "").trim();
             JSONArray actions = plan.optJSONArray("actions");
+
             if (actions == null) {
                 if (!say.isEmpty()) listener.reply(say);
                 return true;
@@ -55,24 +72,33 @@ public final class NovaAgentPlanner {
             listener.status("AGENT • EXECUTING " + count + " STEPS");
 
             List<String> failures = new ArrayList<>();
+
             for (int i = 0; i < count; i++) {
                 JSONObject action = actions.optJSONObject(i);
                 if (action == null) continue;
 
-                String type = action.optString("type", "none").trim();
+                String type = action.optString("type", "none")
+                        .trim().toLowerCase(Locale.ROOT);
                 String value = action.optString("value", "").trim();
-                if (type.isEmpty() || "none".equals(type)) continue;
+
+                if (!ALLOWED.contains(type)) {
+                    failures.add(type.isEmpty() ? "unknown" : type);
+                    listener.status("AGENT • BLOCKED UNKNOWN ACTION");
+                    continue;
+                }
+
+                if ("none".equals(type)) continue;
 
                 listener.status("AGENT • STEP " + (i + 1) + "/" + count + " • " + type);
+
                 boolean ok = executeOne(type, value);
-                if (!ok) {
-                    // One bounded retry is useful for transient Accessibility dispatch failures.
+                if (!ok && MAX_RETRIES > 0) {
                     ok = executeOne(type, value);
                 }
+
                 if (!ok) failures.add(type);
             }
 
-            // A short UI snapshot is used as a post-plan sanity check.
             String screen = executor.readScreen();
             if (screen != null && !screen.trim().isEmpty()) {
                 listener.status("AGENT • VERIFIED CURRENT UI");
@@ -97,13 +123,33 @@ public final class NovaAgentPlanner {
                 listener.status(text == null ? "SCREEN • NO READABLE TEXT" : text);
                 return text != null;
             }
+
             if ("click_text".equals(type)) {
+                if (value.isEmpty()) return false;
                 return executor.clickText(value);
             }
+
             if ("click_index".equals(type)) {
-                try { return executor.clickVisibleIndex(Integer.parseInt(value)); }
-                catch (NumberFormatException ignored) { return false; }
+                try {
+                    int index = Integer.parseInt(value);
+                    return executor.clickVisibleIndex(index);
+                } catch (NumberFormatException ignored) {
+                    return false;
+                }
             }
+
+            if ("open_url".equals(type)) {
+                if (value.isEmpty()) return false;
+                String lower = value.toLowerCase(Locale.ROOT);
+                if (!(lower.startsWith("https://") || lower.startsWith("http://"))) {
+                    return false;
+                }
+            }
+
+            if (("open_app".equals(type) || "open_package".equals(type)) && value.isEmpty()) {
+                return false;
+            }
+
             return executor.execute(type, value);
         } catch (Exception e) {
             Log.e(TAG, "ACTION ERROR: " + type, e);
@@ -113,15 +159,18 @@ public final class NovaAgentPlanner {
 
     private JSONObject parseObject(String raw) throws Exception {
         if (raw == null) return null;
+
         String text = raw.trim();
         if (text.startsWith("```")) {
             text = text.replaceFirst("^```(?:json)?\\s*", "")
                     .replaceFirst("\\s*```$", "")
                     .trim();
         }
+
         int start = text.indexOf('{');
         int end = text.lastIndexOf('}');
         if (start < 0 || end <= start) return null;
+
         return new JSONObject(text.substring(start, end + 1));
     }
 }
