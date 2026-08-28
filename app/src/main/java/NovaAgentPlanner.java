@@ -6,34 +6,21 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 
 /**
  * Bounded autonomous planner for NOVA.
  *
- * The AI proposes actions; this class validates and executes only a small
- * allow-list. Android permissions and capabilities remain the authority.
+ * The AI proposes actions; this class validates them against NovaToolRegistry
+ * and delegates actual execution to the platform action layer. The registry
+ * describes capabilities; it never grants Android permissions by itself.
  */
 public final class NovaAgentPlanner {
 
     private static final String TAG = "NovaAgentPlanner";
     private static final int MAX_STEPS = 8;
     private static final int MAX_RETRIES = 1;
-
-    private static final Set<String> ALLOWED = new HashSet<>();
-
-    static {
-        String[] types = {
-                "home", "back", "recents", "notifications", "quick_settings",
-                "scroll_up", "scroll_down", "swipe_left", "swipe_right",
-                "open_url", "open_package", "open_app", "click_text", "click_index",
-                "search", "read_screen", "settings", "none"
-        };
-        for (String type : types) ALLOWED.add(type);
-    }
 
     public interface ActionExecutor {
         boolean execute(String type, String value);
@@ -49,10 +36,20 @@ public final class NovaAgentPlanner {
 
     private final ActionExecutor executor;
     private final Listener listener;
+    private final NovaToolRegistry registry;
 
     public NovaAgentPlanner(ActionExecutor executor, Listener listener) {
         this.executor = executor;
         this.listener = listener;
+        this.registry = new NovaToolRegistry();
+    }
+
+    public String toolSummary() {
+        return registry.promptSummary();
+    }
+
+    public boolean isKnownTool(String type) {
+        return registry.contains(type);
     }
 
     public boolean execute(String rawPlan) {
@@ -81,9 +78,15 @@ public final class NovaAgentPlanner {
                         .trim().toLowerCase(Locale.ROOT);
                 String value = action.optString("value", "").trim();
 
-                if (!ALLOWED.contains(type)) {
+                if (!registry.validate(type, value)) {
                     failures.add(type.isEmpty() ? "unknown" : type);
-                    listener.status("AGENT • BLOCKED UNKNOWN ACTION");
+                    listener.status("AGENT • BLOCKED INVALID TOOL");
+                    continue;
+                }
+
+                if (registry.requiresConfirmation(type)) {
+                    failures.add(type);
+                    listener.status("AGENT • CONFIRMATION REQUIRED • " + type);
                     continue;
                 }
 
