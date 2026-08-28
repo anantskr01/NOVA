@@ -93,7 +93,7 @@ public final class NovaAgentLoop {
     private synchronized void finish(boolean success, String message) {
         running = false;
         taskStore.appendHistory(success ? "TASK COMPLETE" : "TASK STOPPED");
-        taskStore.finish();
+        taskStore.finish(success);
         callback.status(success ? "AGENT • TASK COMPLETE" : "AGENT • TASK STOPPED");
         if (message != null && !message.trim().isEmpty()) callback.reply(message);
     }
@@ -103,6 +103,6 @@ public final class NovaAgentLoop {
         String text = value.replaceAll("\\s+", " ").trim();
         return text.length() > 1800 ? text.substring(0, 1800) + "…" : text;
     }
-    public synchronized void stop() { running = false; taskStore.appendHistory("TASK STOPPED BY USER"); taskStore.finish(); callback.status("AGENT • STOPPED"); }
+    public synchronized void stop() { running = false; taskStore.appendHistory("TASK STOPPED BY USER"); taskStore.finish(false); callback.status("AGENT • STOPPED"); }
     public synchronized boolean isRunning() { return running; }
 }
