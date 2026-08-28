@@ -1,6 +1,5 @@
 package com.aircontrol;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -8,22 +7,14 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Central registry for NOVA capabilities.
- *
- * The registry is deliberately separate from execution: it describes what
- * the agent may request while NovaActionEngine and other tool implementations
- * remain responsible for actually performing the operation.
- */
+/** Central registry for NOVA capabilities. */
 public final class NovaToolRegistry {
-
     public static final int MAX_VALUE_LENGTH = 4096;
 
     public static final class Tool {
         public final String type;
         public final String description;
         public final boolean requiresConfirmation;
-
         private Tool(String type, String description, boolean requiresConfirmation) {
             this.type = type;
             this.description = description;
@@ -53,22 +44,18 @@ public final class NovaToolRegistry {
         register("settings", "Open Android settings", false);
         register("none", "No operation", false);
 
-        // Phase 2 tool namespaces. These are registered now so the planner has
-        // a stable vocabulary; execution is added only when the corresponding
-        // implementation exists.
         register("web.search", "Search the internet", false);
         register("web.open", "Open a web page", false);
         register("web.fetch", "Fetch readable web content", false);
         register("memory.remember", "Store a local memory item", false);
         register("memory.recall", "Recall local memory", false);
+        register("apps.list", "List installed launchable applications", false);
         register("files.read", "Read an allowed local project file", false);
         register("files.write", "Write an allowed local project file", false);
         register("files.create", "Create an allowed local project file", false);
         register("code.create", "Create source code in an allowed project workspace", false);
         register("code.modify", "Modify source code in an allowed project workspace", false);
 
-        // External communication is intentionally a confirmation-gated future
-        // capability. Registration does not grant execution permission.
         register("communication.send_message", "Send an external message on the user's behalf", true);
         register("communication.make_call", "Start an external phone call", true);
     }
@@ -103,8 +90,7 @@ public final class NovaToolRegistry {
     public String promptSummary() {
         StringBuilder out = new StringBuilder();
         for (Tool tool : tools.values()) {
-            out.append("- ").append(tool.type)
-                    .append(": ").append(tool.description);
+            out.append("- ").append(tool.type).append(": ").append(tool.description);
             if (tool.requiresConfirmation) out.append(" [CONFIRMATION REQUIRED]");
             out.append('\n');
         }
