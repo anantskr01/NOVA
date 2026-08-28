@@ -8,9 +8,7 @@ import org.json.JSONObject;
 public final class NovaAgentLoop {
     private static final String TAG = "NovaAgentLoop";
     private static final int MAX_ITERATIONS = 4;
-
     public interface Callback { void status(String text); void reply(String text); }
-
     private final NovaAiClient ai;
     private final NovaAgentPlanner planner;
     private final NovaMemory memory;
@@ -55,7 +53,8 @@ public final class NovaAgentLoop {
                     "\n\nLAST TASK RESULT:\n" + safe(taskStore.lastResult()) + "\n\nTASK:\n" + goal);
             messages.put(context);
             JSONObject user = new JSONObject();
-            user.put("role", "user", iteration == 0 ? goal : "Continue from the current observed state. Re-plan only what remains and do not repeat confirmed successful actions.");
+            user.put("role", "user");
+            user.put("content", iteration == 0 ? goal : "Continue from the current observed state. Re-plan only what remains and do not repeat confirmed successful actions.");
             messages.put(user);
             ai.chat(endpoint, apiKey, model, messages, new NovaAiClient.Callback() {
                 @Override public void onResult(String response) {
