@@ -11,6 +11,9 @@ public final class NovaTaskStore {
     private static final String LAST_RESULT = "last_result";
     private static final String HISTORY = "history";
     private static final String RUNNING = "running";
+    private static final String COMPLETED = "completed";
+    private static final String STARTED_AT = "started_at";
+    private static final String FINISHED_AT = "finished_at";
     private static final int MAX_HISTORY_CHARS = 12000;
 
     private final SharedPreferences prefs;
@@ -21,12 +24,16 @@ public final class NovaTaskStore {
     }
 
     public synchronized void begin(String goal) {
+        long now = System.currentTimeMillis();
         prefs.edit()
                 .putString(GOAL, goal == null ? "" : goal.trim())
                 .putInt(ITERATION, 0)
                 .putString(LAST_RESULT, "")
                 .putString(HISTORY, "")
                 .putBoolean(RUNNING, true)
+                .putBoolean(COMPLETED, false)
+                .putLong(STARTED_AT, now)
+                .remove(FINISHED_AT)
                 .apply();
     }
 
@@ -53,8 +60,11 @@ public final class NovaTaskStore {
     public synchronized void appendHistory(String entry) {
         if (entry == null || entry.trim().isEmpty()) return;
         String current = prefs.getString(HISTORY, "");
-        String next = (current == null || current.isEmpty()) ? entry.trim() : current + "\n" + entry.trim();
-        if (next.length() > MAX_HISTORY_CHARS) next = next.substring(next.length() - MAX_HISTORY_CHARS);
+        String next = (current == null || current.isEmpty())
+                ? entry.trim() : current + "\n" + entry.trim();
+        if (next.length() > MAX_HISTORY_CHARS) {
+            next = next.substring(next.length() - MAX_HISTORY_CHARS);
+        }
         prefs.edit().putString(HISTORY, next).apply();
     }
 
@@ -66,8 +76,28 @@ public final class NovaTaskStore {
         return prefs.getBoolean(RUNNING, false);
     }
 
+    public synchronized boolean isCompleted() {
+        return prefs.getBoolean(COMPLETED, false);
+    }
+
+    public synchronized long startedAt() {
+        return prefs.getLong(STARTED_AT, 0L);
+    }
+
+    public synchronized long finishedAt() {
+        return prefs.getLong(FINISHED_AT, 0L);
+    }
+
     public synchronized void finish() {
-        prefs.edit().putBoolean(RUNNING, false).apply();
+        finish(false);
+    }
+
+    public synchronized void finish(boolean completed) {
+        prefs.edit()
+                .putBoolean(RUNNING, false)
+                .putBoolean(COMPLETED, completed)
+                .putLong(FINISHED_AT, System.currentTimeMillis())
+                .apply();
     }
 
     public synchronized void clear() {
