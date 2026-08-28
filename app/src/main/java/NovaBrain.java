@@ -16,6 +16,7 @@ public final class NovaBrain {
     private final NovaActionEngine actions;
     private final NovaAgentPlanner planner;
     private final NovaAiClient ai;
+    private final NovaToolExecutor toolExecutor;
     private final Listener listener;
     private boolean thinking;
 
@@ -26,6 +27,7 @@ public final class NovaBrain {
         this.listener = listener;
         memory = new NovaMemory(app);
         ai = new NovaAiClient();
+        toolExecutor = new NovaToolExecutor();
         actions = new NovaActionEngine(app, new NovaActionEngine.Callback() {
             @Override public void status(String text) { NovaBrain.this.status(text); }
             @Override public void reply(String text) { NovaBrain.this.reply(text); }
@@ -37,6 +39,9 @@ public final class NovaBrain {
             @Override public boolean clickVisibleIndex(int index) {
                 GestureAccessibilityService service = GestureAccessibilityService.getInstance();
                 return service != null && service.clickVisibleIndex(index);
+            }
+            @Override public String executeTool(String type, String value) {
+                return toolExecutor.execute(type, value);
             }
         }, new NovaAgentPlanner.Listener() {
             @Override public void status(String text) { NovaBrain.this.status(text); }
@@ -152,6 +157,7 @@ public final class NovaBrain {
                 "Use at most 8 actions. Use read_screen before ambiguous UI interaction. " +
                 "Use click_index only when the user explicitly refers to a numbered visible item. " +
                 "Only request registered tools. A registered tool is not necessarily implemented yet; never pretend an unavailable tool succeeded. " +
+                "Web tools return bounded text and may fail on sites that require login or dynamic rendering. " +
                 "Never bypass permissions, authentication, security controls or private app data. " +
                 "If a requested operation is unavailable, explain the limitation and return no risky actions.";
     }
