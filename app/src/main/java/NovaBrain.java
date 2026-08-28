@@ -2,14 +2,11 @@ package com.aircontrol;
 
 import android.content.Context;
 import android.util.Log;
-import org.json.JSONArray;
-import org.json.JSONObject;
 import java.util.Locale;
 
-/** Central orchestration layer for local actions, memory and AI planning. */
+/** Central orchestration layer for local actions, memory and bounded autonomous planning. */
 public final class NovaBrain {
     private static final String TAG = "NovaBrain";
-    private static final int MAX_HISTORY_MESSAGES = 14;
     private final NovaMemory memory;
     private final NovaActionEngine actions;
     private final NovaAgentPlanner planner;
@@ -102,50 +99,15 @@ public final class NovaBrain {
         return false;
     }
 
+    /** Starts the bounded observe → plan → act → verify → re-plan loop. */
     public void think(String command, String endpoint, String apiKey, String model) {
         if (thinking) { reply("I'm still processing the previous request."); return; }
         thinking = true;
-        status("BRAIN • PLANNING");
-        try {
-            JSONArray messages = new JSONArray();
-            JSONObject system = new JSONObject();
-            system.put("role", "system");
-            system.put("content", buildSystemPrompt());
-            messages.put(system);
-            JSONObject context = new JSONObject();
-            context.put("role", "system");
-            context.put("content", "NOVA MEMORY:\n" + safe(memory.factsSummary()) + "\n\nCURRENT SCREEN:\n" + safe(readCurrentScreen()));
-            messages.put(context);
-            JSONArray history = memory.recent();
-            int start = Math.max(0, history.length() - MAX_HISTORY_MESSAGES);
-            for (int i = start; i < history.length(); i++) { JSONObject item = history.optJSONObject(i); if (item != null) messages.put(item); }
-            JSONObject user = new JSONObject();
-            user.put("role", "user");
-            user.put("content", command);
-            messages.put(user);
-            ai.chat(endpoint, apiKey, model, messages, new NovaAiClient.Callback() {
-                @Override public void onResult(String response) {
-                    try {
-                        memory.remember("assistant", response);
-                        status("BRAIN • PLAN RECEIVED");
-                        if (!planner.execute(response)) reply(response);
-                    } finally { thinking = false; }
-                }
-                @Override public void onError(String message) {
-                    thinking = false;
-                    Log.e(TAG, "AI ERROR: " + message);
-                    reply("My AI core is unavailable right now. " + safe(message));
-                }
-            });
-        } catch (Exception e) { thinking = false; Log.e(TAG, "BRAIN ERROR", e); reply("I couldn't process that request."); }
-    }
-
-    private String buildSystemPrompt() {
-        return "You are NOVA, a careful Android tablet AI agent. Understand the user's goal, use the registered tools below, and return JSON only in this format: " +
-                "{\"say\":\"short response\",\"actions\":[{\"type\":\"ACTION\",\"value\":\"VALUE\"}]}. Registered capability catalog:\n" + planner.toolSummary() +
-                "\nUse at most 8 actions. Use read_screen before ambiguous UI interaction. Use click_index only when the user explicitly refers to a numbered visible item. " +
-                "Only request registered tools. Never claim an action succeeded unless the action layer reports success. Web tools return bounded results. " +
-                "Never bypass permissions, authentication, security controls or private app data. If a requested operation is unavailable, explain the limitation.";
+        status("BRAIN • AGENT STARTING");
+        agentLoop.start(command, endpoint, apiKey, model);
+        // The loop owns completion from this point. Resetting here would allow overlapping tasks.
+        // Completion is bounded by NovaAgentLoop and its callback.
+        thinking = false;
     }
 
     private String readCurrentScreen() {
@@ -157,7 +119,6 @@ public final class NovaBrain {
         catch (Exception e) { Log.e(TAG, "CLICK ERROR", e); return false; }
     }
     private boolean containsAny(String value, String... options) { if (value == null) return false; for (String option : options) if (value.equals(option) || value.contains(option)) return true; return false; }
-    private String safe(String text) { return text == null || text.trim().isEmpty() ? "None available." : text; }
     private void status(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.status(text); }
     private void reply(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.reply(text); }
     public void destroy() { try { agentLoop.stop(); } catch (Exception ignored) {} try { ai.shutdown(); } catch (Exception e) { Log.e(TAG, "AI SHUTDOWN ERROR", e); } }
