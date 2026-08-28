@@ -17,6 +17,7 @@ public final class NovaAgentPlanner {
     private final NovaToolRegistry registry;
     private final List<String> lastFailures = new ArrayList<>();
     private boolean lastExecutionSuccessful;
+    private String lastToolOutput = "";
 
     public interface ActionExecutor {
         boolean execute(String type, String value);
@@ -35,9 +36,10 @@ public final class NovaAgentPlanner {
     public String currentScreen() { return executor.readScreen(); }
     public boolean lastExecutionSuccessful() { return lastExecutionSuccessful; }
     public String lastFailuresSummary() { return String.join(", ", lastFailures); }
+    public String lastToolOutput() { return lastToolOutput; }
 
     public boolean execute(String rawPlan) {
-        lastFailures.clear(); lastExecutionSuccessful = false;
+        lastFailures.clear(); lastExecutionSuccessful = false; lastToolOutput = "";
         try {
             JSONObject plan = parseObject(rawPlan);
             if (plan == null) return false;
@@ -68,8 +70,13 @@ public final class NovaAgentPlanner {
     }
 
     private boolean executeExternalTool(String type, String value) {
-        try { String result = executor.executeTool(type, value); if (result == null || result.trim().isEmpty()) return false; listener.status("TOOL • RESULT RECEIVED"); listener.reply(result); return true; }
-        catch (Exception e) { Log.e(TAG, "TOOL ERROR: " + type, e); return false; }
+        try {
+            String result = executor.executeTool(type, value);
+            if (result == null || result.trim().isEmpty()) return false;
+            lastToolOutput = result.trim();
+            listener.status("TOOL • RESULT RECEIVED • " + type);
+            return true;
+        } catch (Exception e) { Log.e(TAG, "TOOL ERROR: " + type, e); return false; }
     }
     private boolean executeOne(String type, String value) {
         try {
