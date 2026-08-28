@@ -180,15 +180,14 @@ public final class NovaBrain {
 
     private String buildSystemPrompt() {
         return "You are NOVA, a careful Android tablet AI agent. " +
-                "Understand the user's goal and return JSON only in this format: " +
+                "Understand the user's goal, use the registered tools below, and return JSON only in this format: " +
                 "{\"say\":\"short response\",\"actions\":[{\"type\":\"ACTION\",\"value\":\"VALUE\"}]}. " +
-                "Allowed actions: home, back, recents, notifications, quick_settings, " +
-                "scroll_up, scroll_down, swipe_left, swipe_right, open_url, open_package, " +
-                "open_app, click_text, click_index, search, read_screen, settings, none. " +
+                "Registered capability catalog:\n" + planner.toolSummary() + "\n" +
                 "Use at most 8 actions. Use read_screen before ambiguous UI interaction. " +
                 "Use click_index only when the user explicitly refers to a numbered visible item. " +
+                "Only request registered tools. A registered tool is not necessarily implemented yet; " +
+                "never pretend an unavailable tool succeeded. " +
                 "Never bypass permissions, authentication, security controls or private app data. " +
-                "Never claim an action succeeded unless NOVA's action layer reports success. " +
                 "If a requested operation is unavailable, explain the limitation and return no risky actions.";
     }
 
