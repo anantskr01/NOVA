@@ -10,10 +10,8 @@ import java.util.Locale;
 
 /** Central orchestration layer for local actions, memory and AI planning. */
 public final class NovaBrain {
-
     private static final String TAG = "NovaBrain";
     private static final int MAX_HISTORY_MESSAGES = 14;
-
     private final NovaMemory memory;
     private final NovaActionEngine actions;
     private final NovaAgentPlanner planner;
@@ -21,26 +19,19 @@ public final class NovaBrain {
     private final Listener listener;
     private boolean thinking;
 
-    public interface Listener {
-        void status(String text);
-        void reply(String text);
-    }
+    public interface Listener { void status(String text); void reply(String text); }
 
     public NovaBrain(Context context, Listener listener) {
         Context app = context.getApplicationContext();
         this.listener = listener;
         memory = new NovaMemory(app);
         ai = new NovaAiClient();
-
         actions = new NovaActionEngine(app, new NovaActionEngine.Callback() {
             @Override public void status(String text) { NovaBrain.this.status(text); }
             @Override public void reply(String text) { NovaBrain.this.reply(text); }
         });
-
         planner = new NovaAgentPlanner(new NovaAgentPlanner.ActionExecutor() {
-            @Override public boolean execute(String type, String value) {
-                return actions.execute(type, value);
-            }
+            @Override public boolean execute(String type, String value) { return actions.execute(type, value); }
             @Override public String readScreen() { return readCurrentScreen(); }
             @Override public boolean clickText(String text) { return clickVisibleText(text); }
             @Override public boolean clickVisibleIndex(int index) {
@@ -65,14 +56,11 @@ public final class NovaBrain {
         String text = command.trim();
         memory.remember("user", text);
         status("BRAIN • UNDERSTANDING");
-
         if (handleLocalCommand(text)) return true;
-
         if (endpoint == null || endpoint.trim().isEmpty()) {
             reply("I can perform my built-in tablet actions, but my AI core is not configured yet.");
             return false;
         }
-
         think(text, endpoint, apiKey, model);
         return true;
     }
@@ -90,81 +78,59 @@ public final class NovaBrain {
             if (containsAny(c, "swipe left", "go left")) return actions.execute("swipe_left", "");
             if (containsAny(c, "swipe right", "go right")) return actions.execute("swipe_right", "");
             if (containsAny(c, "open settings", "settings")) return actions.execute("settings", "");
-
             if (containsAny(c, "read screen", "what is on screen", "describe screen", "what can you see")) {
                 String screen = readCurrentScreen();
                 reply(screen == null || screen.trim().isEmpty() ? "I cannot read the current screen." : screen);
                 return true;
             }
-
             if (c.startsWith("remember ")) {
                 String note = command.substring("remember ".length()).trim();
-                if (!note.isEmpty()) {
-                    memory.rememberFact("note", note);
-                    reply("I'll remember that locally.");
-                    return true;
-                }
+                if (!note.isEmpty()) { memory.rememberFact("note", note); reply("I'll remember that locally."); return true; }
             }
-
             if (containsAny(c, "what do you remember", "what do you know about me")) {
                 reply(memory.factsSummary());
                 return true;
             }
-
             if (c.startsWith("open ")) {
                 String appName = command.substring(5).trim();
                 if (!appName.isEmpty() && actions.execute("open_app", appName)) return true;
             }
-        } catch (Exception e) {
-            Log.e(TAG, "LOCAL COMMAND ERROR", e);
-        }
+        } catch (Exception e) { Log.e(TAG, "LOCAL COMMAND ERROR", e); }
         return false;
     }
 
     public void think(String command, String endpoint, String apiKey, String model) {
-        if (thinking) {
-            reply("I'm still processing the previous request.");
-            return;
-        }
+        if (thinking) { reply("I'm still processing the previous request."); return; }
         thinking = true;
         status("BRAIN • PLANNING");
-
         try {
             JSONArray messages = new JSONArray();
             JSONObject system = new JSONObject();
             system.put("role", "system");
             system.put("content", buildSystemPrompt());
             messages.put(system);
-
             JSONObject context = new JSONObject();
             context.put("role", "system");
-            context.put("content", "NOVA MEMORY:\n" + safe(memory.factsSummary()) +
-                    "\n\nCURRENT SCREEN:\n" + safe(readCurrentScreen()));
+            context.put("content", "NOVA MEMORY:\n" + safe(memory.factsSummary()) + "\n\nCURRENT SCREEN:\n" + safe(readCurrentScreen()));
             messages.put(context);
-
             JSONArray history = memory.recent();
             int start = Math.max(0, history.length() - MAX_HISTORY_MESSAGES);
             for (int i = start; i < history.length(); i++) {
                 JSONObject item = history.optJSONObject(i);
                 if (item != null) messages.put(item);
             }
-
             JSONObject user = new JSONObject();
             user.put("role", "user");
             user.put("content", command);
             messages.put(user);
-
             ai.chat(endpoint, apiKey, model, messages, new NovaAiClient.Callback() {
                 @Override public void onResult(String response) {
                     try {
                         memory.remember("assistant", response);
                         status("BRAIN • PLAN RECEIVED");
                         if (!planner.execute(response)) reply(response);
-                    } finally {
-                        thinking = false;
-                    }
+                    } finally { thinking = false; }
                 }
-
                 @Override public void onError(String message) {
                     thinking = false;
                     Log.e(TAG, "AI ERROR: " + message);
@@ -185,8 +151,7 @@ public final class NovaBrain {
                 "Registered capability catalog:\n" + planner.toolSummary() + "\n" +
                 "Use at most 8 actions. Use read_screen before ambiguous UI interaction. " +
                 "Use click_index only when the user explicitly refers to a numbered visible item. " +
-                "Only request registered tools. A registered tool is not necessarily implemented yet; " +
-                "never pretend an unavailable tool succeeded. " +
+                "Only request registered tools. A registered tool is not necessarily implemented yet; never pretend an unavailable tool succeeded. " +
                 "Never bypass permissions, authentication, security controls or private app data. " +
                 "If a requested operation is unavailable, explain the limitation and return no risky actions.";
     }
@@ -196,20 +161,14 @@ public final class NovaBrain {
             GestureAccessibilityService service = GestureAccessibilityService.getInstance();
             if (service == null) return "Accessibility service is not connected.";
             return service.getVisibleTextSummary();
-        } catch (Exception e) {
-            Log.e(TAG, "SCREEN READ ERROR", e);
-            return "Unable to read current screen.";
-        }
+        } catch (Exception e) { Log.e(TAG, "SCREEN READ ERROR", e); return "Unable to read current screen."; }
     }
 
     private boolean clickVisibleText(String text) {
         try {
             GestureAccessibilityService service = GestureAccessibilityService.getInstance();
             return service != null && service.clickText(text);
-        } catch (Exception e) {
-            Log.e(TAG, "CLICK ERROR", e);
-            return false;
-        }
+        } catch (Exception e) { Log.e(TAG, "CLICK ERROR", e); return false; }
     }
 
     private boolean containsAny(String value, String... options) {
@@ -218,19 +177,8 @@ public final class NovaBrain {
         return false;
     }
 
-    private String safe(String text) {
-        return text == null || text.trim().isEmpty() ? "None available." : text;
-    }
-
-    private void status(String text) {
-        if (listener != null && text != null && !text.trim().isEmpty()) listener.status(text);
-    }
-
-    private void reply(String text) {
-        if (listener != null && text != null && !text.trim().isEmpty()) listener.reply(text);
-    }
-
-    public void destroy() {
-        try { ai.shutdown(); } catch (Exception e) { Log.e(TAG, "AI SHUTDOWN ERROR", e); }
-    }
+    private String safe(String text) { return text == null || text.trim().isEmpty() ? "None available." : text; }
+    private void status(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.status(text); }
+    private void reply(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.reply(text); }
+    public void destroy() { try { ai.shutdown(); } catch (Exception e) { Log.e(TAG, "AI SHUTDOWN ERROR", e); } }
 }
