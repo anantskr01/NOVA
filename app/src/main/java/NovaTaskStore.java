@@ -9,7 +9,9 @@ public final class NovaTaskStore {
     private static final String GOAL = "goal";
     private static final String ITERATION = "iteration";
     private static final String LAST_RESULT = "last_result";
+    private static final String HISTORY = "history";
     private static final String RUNNING = "running";
+    private static final int MAX_HISTORY_CHARS = 12000;
 
     private final SharedPreferences prefs;
 
@@ -23,6 +25,7 @@ public final class NovaTaskStore {
                 .putString(GOAL, goal == null ? "" : goal.trim())
                 .putInt(ITERATION, 0)
                 .putString(LAST_RESULT, "")
+                .putString(HISTORY, "")
                 .putBoolean(RUNNING, true)
                 .apply();
     }
@@ -45,6 +48,18 @@ public final class NovaTaskStore {
 
     public synchronized String lastResult() {
         return prefs.getString(LAST_RESULT, "");
+    }
+
+    public synchronized void appendHistory(String entry) {
+        if (entry == null || entry.trim().isEmpty()) return;
+        String current = prefs.getString(HISTORY, "");
+        String next = (current == null || current.isEmpty()) ? entry.trim() : current + "\n" + entry.trim();
+        if (next.length() > MAX_HISTORY_CHARS) next = next.substring(next.length() - MAX_HISTORY_CHARS);
+        prefs.edit().putString(HISTORY, next).apply();
+    }
+
+    public synchronized String history() {
+        return prefs.getString(HISTORY, "");
     }
 
     public synchronized boolean isRunning() {
