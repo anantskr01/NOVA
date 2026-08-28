@@ -2,10 +2,8 @@ package com.aircontrol;
 
 import android.content.Context;
 import android.util.Log;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
-
 import java.util.Locale;
 
 /** Central orchestration layer for local actions, memory and AI planning. */
@@ -17,6 +15,7 @@ public final class NovaBrain {
     private final NovaAgentPlanner planner;
     private final NovaAiClient ai;
     private final NovaToolExecutor toolExecutor;
+    private final NovaAgentLoop agentLoop;
     private final Listener listener;
     private boolean thinking;
 
@@ -40,10 +39,12 @@ public final class NovaBrain {
                 GestureAccessibilityService service = GestureAccessibilityService.getInstance();
                 return service != null && service.clickVisibleIndex(index);
             }
-            @Override public String executeTool(String type, String value) {
-                return toolExecutor.execute(type, value);
-            }
+            @Override public String executeTool(String type, String value) { return toolExecutor.execute(type, value); }
         }, new NovaAgentPlanner.Listener() {
+            @Override public void status(String text) { NovaBrain.this.status(text); }
+            @Override public void reply(String text) { NovaBrain.this.reply(text); }
+        });
+        agentLoop = new NovaAgentLoop(ai, planner, memory, new NovaAgentLoop.Callback() {
             @Override public void status(String text) { NovaBrain.this.status(text); }
             @Override public void reply(String text) { NovaBrain.this.reply(text); }
         });
@@ -92,10 +93,7 @@ public final class NovaBrain {
                 String note = command.substring("remember ".length()).trim();
                 if (!note.isEmpty()) { memory.rememberFact("note", note); reply("I'll remember that locally."); return true; }
             }
-            if (containsAny(c, "what do you remember", "what do you know about me")) {
-                reply(memory.factsSummary());
-                return true;
-            }
+            if (containsAny(c, "what do you remember", "what do you know about me")) { reply(memory.factsSummary()); return true; }
             if (c.startsWith("open ")) {
                 String appName = command.substring(5).trim();
                 if (!appName.isEmpty() && actions.execute("open_app", appName)) return true;
@@ -120,10 +118,7 @@ public final class NovaBrain {
             messages.put(context);
             JSONArray history = memory.recent();
             int start = Math.max(0, history.length() - MAX_HISTORY_MESSAGES);
-            for (int i = start; i < history.length(); i++) {
-                JSONObject item = history.optJSONObject(i);
-                if (item != null) messages.put(item);
-            }
+            for (int i = start; i < history.length(); i++) { JSONObject item = history.optJSONObject(i); if (item != null) messages.put(item); }
             JSONObject user = new JSONObject();
             user.put("role", "user");
             user.put("content", command);
@@ -142,49 +137,28 @@ public final class NovaBrain {
                     reply("My AI core is unavailable right now. " + safe(message));
                 }
             });
-        } catch (Exception e) {
-            thinking = false;
-            Log.e(TAG, "BRAIN ERROR", e);
-            reply("I couldn't process that request.");
-        }
+        } catch (Exception e) { thinking = false; Log.e(TAG, "BRAIN ERROR", e); reply("I couldn't process that request."); }
     }
 
     private String buildSystemPrompt() {
-        return "You are NOVA, a careful Android tablet AI agent. " +
-                "Understand the user's goal, use the registered tools below, and return JSON only in this format: " +
-                "{\"say\":\"short response\",\"actions\":[{\"type\":\"ACTION\",\"value\":\"VALUE\"}]}. " +
-                "Registered capability catalog:\n" + planner.toolSummary() + "\n" +
-                "Use at most 8 actions. Use read_screen before ambiguous UI interaction. " +
-                "Use click_index only when the user explicitly refers to a numbered visible item. " +
-                "Only request registered tools. A registered tool is not necessarily implemented yet; never pretend an unavailable tool succeeded. " +
-                "Web tools return bounded text and may fail on sites that require login or dynamic rendering. " +
-                "Never bypass permissions, authentication, security controls or private app data. " +
-                "If a requested operation is unavailable, explain the limitation and return no risky actions.";
+        return "You are NOVA, a careful Android tablet AI agent. Understand the user's goal, use the registered tools below, and return JSON only in this format: " +
+                "{\"say\":\"short response\",\"actions\":[{\"type\":\"ACTION\",\"value\":\"VALUE\"}]}. Registered capability catalog:\n" + planner.toolSummary() +
+                "\nUse at most 8 actions. Use read_screen before ambiguous UI interaction. Use click_index only when the user explicitly refers to a numbered visible item. " +
+                "Only request registered tools. Never claim an action succeeded unless the action layer reports success. Web tools return bounded results. " +
+                "Never bypass permissions, authentication, security controls or private app data. If a requested operation is unavailable, explain the limitation.";
     }
 
     private String readCurrentScreen() {
-        try {
-            GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-            if (service == null) return "Accessibility service is not connected.";
-            return service.getVisibleTextSummary();
-        } catch (Exception e) { Log.e(TAG, "SCREEN READ ERROR", e); return "Unable to read current screen."; }
+        try { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); if (service == null) return "Accessibility service is not connected."; return service.getVisibleTextSummary(); }
+        catch (Exception e) { Log.e(TAG, "SCREEN READ ERROR", e); return "Unable to read current screen."; }
     }
-
     private boolean clickVisibleText(String text) {
-        try {
-            GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-            return service != null && service.clickText(text);
-        } catch (Exception e) { Log.e(TAG, "CLICK ERROR", e); return false; }
+        try { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service != null && service.clickText(text); }
+        catch (Exception e) { Log.e(TAG, "CLICK ERROR", e); return false; }
     }
-
-    private boolean containsAny(String value, String... options) {
-        if (value == null) return false;
-        for (String option : options) if (value.equals(option) || value.contains(option)) return true;
-        return false;
-    }
-
+    private boolean containsAny(String value, String... options) { if (value == null) return false; for (String option : options) if (value.equals(option) || value.contains(option)) return true; return false; }
     private String safe(String text) { return text == null || text.trim().isEmpty() ? "None available." : text; }
     private void status(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.status(text); }
     private void reply(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.reply(text); }
-    public void destroy() { try { ai.shutdown(); } catch (Exception e) { Log.e(TAG, "AI SHUTDOWN ERROR", e); } }
+    public void destroy() { try { agentLoop.stop(); } catch (Exception ignored) {} try { ai.shutdown(); } catch (Exception e) { Log.e(TAG, "AI SHUTDOWN ERROR", e); } }
 }
