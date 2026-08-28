@@ -58,6 +58,28 @@ public final class NovaMemory {
         prefs.edit().putString(FACTS, facts.toString()).apply();
     }
 
+    /** Returns saved facts matching the query, or all facts when the query is empty. */
+    public synchronized String recall(String query) {
+        JSONArray facts = readFacts();
+        if (facts.length() == 0) return "";
+        String needle = query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < facts.length(); i++) {
+            JSONObject item = facts.optJSONObject(i);
+            if (item == null) continue;
+            String key = item.optString("key", "");
+            String value = item.optString("value", "");
+            if (!needle.isEmpty()
+                    && !key.toLowerCase(java.util.Locale.ROOT).contains(needle)
+                    && !value.toLowerCase(java.util.Locale.ROOT).contains(needle)) {
+                continue;
+            }
+            if (out.length() > 3000) break;
+            out.append(key).append(": ").append(value).append('\n');
+        }
+        return out.toString().trim();
+    }
+
     public synchronized String factsSummary() {
         JSONArray facts = readFacts();
         if (facts.length() == 0) return "No saved facts.";
