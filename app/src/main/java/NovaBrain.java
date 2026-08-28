@@ -24,7 +24,7 @@ public final class NovaBrain {
         memory = new NovaMemory(app);
         taskStore = new NovaTaskStore(app);
         ai = new NovaAiClient();
-        toolExecutor = new NovaToolExecutor();
+        toolExecutor = new NovaToolExecutor(app);
         actions = new NovaActionEngine(app, new NovaActionEngine.Callback() {
             @Override public void status(String text) { NovaBrain.this.status(text); }
             @Override public void reply(String text) { NovaBrain.this.reply(text); }
