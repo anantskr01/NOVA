@@ -11,6 +11,8 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.URI;
 import java.net.URLEncoder;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -23,6 +25,7 @@ public final class NovaToolExecutor {
     private static final int READ_TIMEOUT_MS = 12000;
     private static final int MAX_RESPONSE_CHARS = 30000;
     private static final int MAX_FILE_CHARS = 100000;
+    private static final int MAX_REDIRECTS = 4;
 
     private final File workspace;
     private final NovaMemory memory;
@@ -85,24 +88,61 @@ public final class NovaToolExecutor {
 
     private String fetch(String rawUrl) throws Exception {
         if (TextUtils.isEmpty(rawUrl)) return null;
-        String value = rawUrl.trim();
-        String lower = value.toLowerCase(Locale.ROOT);
-        if (!lower.startsWith("https://") && !lower.startsWith("http://")) return null;
-        HttpURLConnection connection = (HttpURLConnection) new URL(value).openConnection();
-        connection.setRequestMethod("GET");
-        connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        connection.setReadTimeout(READ_TIMEOUT_MS);
-        connection.setInstanceFollowRedirects(true);
-        connection.setRequestProperty("User-Agent", "NOVA/1.0 Android");
-        connection.setRequestProperty("Accept", "text/html,text/plain,application/json;q=0.9,*/*;q=0.5");
+        String current = rawUrl.trim();
+        for (int redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
+            URI uri = new URI(current);
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+            if (!("https".equals(scheme) || "http".equals(scheme))) return null;
+            if (uri.getUserInfo() != null) return null;
+            if (isBlockedHost(uri.getHost())) return "WEB • BLOCKED PRIVATE/LOCAL ADDRESS";
+
+            HttpURLConnection connection = (HttpURLConnection) new URL(current).openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            connection.setReadTimeout(READ_TIMEOUT_MS);
+            connection.setInstanceFollowRedirects(false);
+            connection.setRequestProperty("User-Agent", "NOVA/1.0 Android");
+            connection.setRequestProperty("Accept", "text/html,text/plain,application/json;q=0.9,*/*;q=0.5");
+            try {
+                int code = connection.getResponseCode();
+                if (code >= 300 && code < 400) {
+                    String location = connection.getHeaderField("Location");
+                    if (TextUtils.isEmpty(location)) return "HTTP " + code;
+                    current = new URL(new URL(current), location).toString();
+                    continue;
+                }
+                InputStream stream = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                if (stream == null) return "HTTP " + code;
+                String body = readBounded(stream, MAX_RESPONSE_CHARS);
+                if (code < 200 || code >= 300) return "HTTP " + code + "\n" + body;
+                return stripHtml(body);
+            } finally { connection.disconnect(); }
+        }
+        return "WEB • TOO MANY REDIRECTS";
+    }
+
+    private boolean isBlockedHost(String host) throws Exception {
+        if (TextUtils.isEmpty(host)) return true;
+        String lower = host.toLowerCase(Locale.ROOT);
+        if ("localhost".equals(lower) || lower.endsWith(".localhost") || lower.endsWith(".local")) return true;
+        InetAddress[] addresses = InetAddress.getAllByName(host);
+        for (InetAddress address : addresses) {
+            if (address.isLoopbackAddress() || address.isAnyLocalAddress() || address.isLinkLocalAddress()
+                    || address.isSiteLocalAddress() || isPrivateIpv4(address.getHostAddress())) return true;
+        }
+        return false;
+    }
+
+    private boolean isPrivateIpv4(String ip) {
+        if (ip == null || ip.indexOf(':') >= 0) return false;
+        String[] parts = ip.split("\\.");
+        if (parts.length != 4) return false;
         try {
-            int code = connection.getResponseCode();
-            InputStream stream = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
-            if (stream == null) return "HTTP " + code;
-            String body = readBounded(stream, MAX_RESPONSE_CHARS);
-            if (code < 200 || code >= 300) return "HTTP " + code + "\n" + body;
-            return stripHtml(body);
-        } finally { connection.disconnect(); }
+            int a = Integer.parseInt(parts[0]);
+            int b = Integer.parseInt(parts[1]);
+            return a == 10 || a == 127 || (a == 172 && b >= 16 && b <= 31)
+                    || (a == 192 && b == 168) || (a == 169 && b == 254);
+        } catch (NumberFormatException ignored) { return true; }
     }
 
     private String readFile(String value) throws Exception {
