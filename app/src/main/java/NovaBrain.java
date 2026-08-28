@@ -13,8 +13,8 @@ public final class NovaBrain {
     private final NovaAiClient ai;
     private final NovaToolExecutor toolExecutor;
     private final NovaAgentLoop agentLoop;
+    private final NovaTaskStore taskStore;
     private final Listener listener;
-    private boolean thinking;
 
     public interface Listener { void status(String text); void reply(String text); }
 
@@ -22,6 +22,7 @@ public final class NovaBrain {
         Context app = context.getApplicationContext();
         this.listener = listener;
         memory = new NovaMemory(app);
+        taskStore = new NovaTaskStore(app);
         ai = new NovaAiClient();
         toolExecutor = new NovaToolExecutor();
         actions = new NovaActionEngine(app, new NovaActionEngine.Callback() {
@@ -41,7 +42,7 @@ public final class NovaBrain {
             @Override public void status(String text) { NovaBrain.this.status(text); }
             @Override public void reply(String text) { NovaBrain.this.reply(text); }
         });
-        agentLoop = new NovaAgentLoop(ai, planner, memory, new NovaAgentLoop.Callback() {
+        agentLoop = new NovaAgentLoop(ai, planner, memory, taskStore, new NovaAgentLoop.Callback() {
             @Override public void status(String text) { NovaBrain.this.status(text); }
             @Override public void reply(String text) { NovaBrain.this.reply(text); }
         });
@@ -99,26 +100,30 @@ public final class NovaBrain {
         return false;
     }
 
-    /** Starts the bounded observe → plan → act → verify → re-plan loop. */
     public void think(String command, String endpoint, String apiKey, String model) {
-        if (thinking) { reply("I'm still processing the previous request."); return; }
-        thinking = true;
+        if (agentLoop.isRunning()) { reply("I'm still processing the previous request."); return; }
         status("BRAIN • AGENT STARTING");
         agentLoop.start(command, endpoint, apiKey, model);
-        // The loop owns completion from this point. Resetting here would allow overlapping tasks.
-        // Completion is bounded by NovaAgentLoop and its callback.
-        thinking = false;
     }
 
     private String readCurrentScreen() {
-        try { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); if (service == null) return "Accessibility service is not connected."; return service.getVisibleTextSummary(); }
-        catch (Exception e) { Log.e(TAG, "SCREEN READ ERROR", e); return "Unable to read current screen."; }
+        try {
+            GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+            if (service == null) return "Accessibility service is not connected.";
+            return service.getVisibleTextSummary();
+        } catch (Exception e) { Log.e(TAG, "SCREEN READ ERROR", e); return "Unable to read current screen."; }
     }
     private boolean clickVisibleText(String text) {
-        try { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service != null && service.clickText(text); }
-        catch (Exception e) { Log.e(TAG, "CLICK ERROR", e); return false; }
+        try {
+            GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+            return service != null && service.clickText(text);
+        } catch (Exception e) { Log.e(TAG, "CLICK ERROR", e); return false; }
     }
-    private boolean containsAny(String value, String... options) { if (value == null) return false; for (String option : options) if (value.equals(option) || value.contains(option)) return true; return false; }
+    private boolean containsAny(String value, String... options) {
+        if (value == null) return false;
+        for (String option : options) if (value.equals(option) || value.contains(option)) return true;
+        return false;
+    }
     private void status(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.status(text); }
     private void reply(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.reply(text); }
     public void destroy() { try { agentLoop.stop(); } catch (Exception ignored) {} try { ai.shutdown(); } catch (Exception e) { Log.e(TAG, "AI SHUTDOWN ERROR", e); } }
