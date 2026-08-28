@@ -3,9 +3,7 @@ package com.aircontrol;
 import android.content.Context;
 import android.text.TextUtils;
 import android.util.Log;
-
 import org.json.JSONObject;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -18,7 +16,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
-/** Executes bounded web and local-workspace tools for NOVA. */
+/** Executes bounded web, memory and local-workspace tools for NOVA. */
 public final class NovaToolExecutor {
     private static final String TAG = "NovaToolExecutor";
     private static final int CONNECT_TIMEOUT_MS = 8000;
@@ -27,10 +25,13 @@ public final class NovaToolExecutor {
     private static final int MAX_FILE_CHARS = 100000;
 
     private final File workspace;
+    private final NovaMemory memory;
 
     public NovaToolExecutor(Context context) {
-        workspace = new File(context.getApplicationContext().getFilesDir(), "nova-workspace");
+        Context app = context.getApplicationContext();
+        workspace = new File(app.getFilesDir(), "nova-workspace");
         if (!workspace.exists()) workspace.mkdirs();
+        memory = new NovaMemory(app);
     }
 
     public String execute(String type, String value) {
@@ -41,6 +42,8 @@ public final class NovaToolExecutor {
                 case "web.fetch": return fetch(value);
                 case "web.search":
                 case "search": return search(value);
+                case "memory.remember": return remember(value);
+                case "memory.recall": return recall(value);
                 case "files.read": return readFile(value);
                 case "files.write": return writeFile(value, false);
                 case "files.create": return writeFile(value, true);
@@ -52,6 +55,27 @@ public final class NovaToolExecutor {
             Log.e(TAG, "TOOL ERROR: " + type, e);
             return null;
         }
+    }
+
+    private String remember(String value) {
+        if (TextUtils.isEmpty(value)) return null;
+        try {
+            JSONObject request = new JSONObject(value);
+            String key = request.optString("key", "note").trim();
+            String text = request.optString("value", "").trim();
+            if (text.isEmpty()) return null;
+            memory.rememberFact(key, text);
+            return "MEMORY • SAVED • " + key;
+        } catch (Exception e) {
+            memory.rememberFact("note", value.trim());
+            return "MEMORY • SAVED • note";
+        }
+    }
+
+    private String recall(String value) {
+        String query = value == null ? "" : value.trim();
+        String result = memory.recall(query);
+        return result == null || result.trim().isEmpty() ? "MEMORY • NO MATCHES" : result;
     }
 
     private String search(String query) throws Exception {
@@ -86,9 +110,7 @@ public final class NovaToolExecutor {
         if (path == null) return null;
         File file = resolve(path);
         if (!file.isFile()) return null;
-        try (FileInputStream in = new FileInputStream(file)) {
-            return readBounded(in, MAX_FILE_CHARS);
-        }
+        try (FileInputStream in = new FileInputStream(file)) { return readBounded(in, MAX_FILE_CHARS); }
     }
 
     private String writeFile(String value, boolean createOnly) throws Exception {
@@ -129,15 +151,10 @@ public final class NovaToolExecutor {
     private String readBounded(InputStream stream, int limit) throws Exception {
         StringBuilder out = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-            char[] buffer = new char[2048];
-            int total = 0;
-            int read;
+            char[] buffer = new char[2048]; int total = 0; int read;
             while ((read = reader.read(buffer)) != -1) {
-                int remaining = limit - total;
-                if (remaining <= 0) break;
-                int take = Math.min(read, remaining);
-                out.append(buffer, 0, take);
-                total += take;
+                int remaining = limit - total; if (remaining <= 0) break;
+                int take = Math.min(read, remaining); out.append(buffer, 0, take); total += take;
                 if (take < read) break;
             }
         }
