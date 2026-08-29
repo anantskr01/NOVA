@@ -18,6 +18,7 @@ public final class NovaAgentPlanner {
     private final NovaToolRegistry registry;
     private final List<String> lastFailures = new ArrayList<>();
     private boolean lastExecutionSuccessful;
+    private boolean lastPlanClaimedComplete;
     private String lastToolOutput = "";
 
     public interface ActionExecutor {
@@ -36,20 +37,22 @@ public final class NovaAgentPlanner {
     public boolean isKnownTool(String type) { return registry.contains(type); }
     public String currentScreen() { return executor.readScreen(); }
     public boolean lastExecutionSuccessful() { return lastExecutionSuccessful; }
+    public boolean lastPlanClaimedComplete() { return lastPlanClaimedComplete; }
     public String lastFailuresSummary() { return String.join(", ", lastFailures); }
     public String lastToolOutput() { return lastToolOutput; }
 
     public boolean execute(String rawPlan) {
-        lastFailures.clear(); lastExecutionSuccessful = false; lastToolOutput = "";
+        lastFailures.clear(); lastExecutionSuccessful = false; lastPlanClaimedComplete = false; lastToolOutput = "";
         try {
             JSONObject plan = parseObject(rawPlan);
             if (plan == null) return false;
             String say = plan.optString("say", "").trim();
+            lastPlanClaimedComplete = plan.optBoolean("complete", false);
             JSONArray actions = plan.optJSONArray("actions");
             if (actions == null) {
-                if (!say.isEmpty()) listener.reply(say);
-                lastExecutionSuccessful = true;
-                return true;
+                if (!say.isEmpty() && lastPlanClaimedComplete) listener.reply(say);
+                lastExecutionSuccessful = lastPlanClaimedComplete;
+                return lastPlanClaimedComplete;
             }
 
             int requestedCount = actions.length();
@@ -105,8 +108,9 @@ public final class NovaAgentPlanner {
             }
             if (!lastFailures.isEmpty()) listener.status("AGENT • " + lastFailures.size() + " ACTION(S) NOT COMPLETED");
 
-            if (!say.isEmpty() && lastFailures.isEmpty()) listener.reply(say);
-            lastExecutionSuccessful = lastFailures.isEmpty();
+            if (!say.isEmpty() && lastFailures.isEmpty() && (count > 0 || lastPlanClaimedComplete)) listener.reply(say);
+            // An empty action list is only a successful completion when the model explicitly claims completion.
+            lastExecutionSuccessful = lastFailures.isEmpty() && (count > 0 || lastPlanClaimedComplete);
             return true;
         } catch (Exception e) {
             Log.e(TAG, "PLAN EXECUTION ERROR", e);
