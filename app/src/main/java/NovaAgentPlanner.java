@@ -86,11 +86,23 @@ public final class NovaAgentPlanner {
                     listener.status("AGENT • RETRY • " + type);
                     ok = executeOne(type, value);
                 }
-                if (!ok) lastFailures.add(type);
+                if (!ok) {
+                    lastFailures.add(type);
+                    continue;
+                }
+
+                String expected = action.optString("expect", "").trim();
+                if (!expected.isEmpty() && !verifyExpected(expected)) {
+                    lastFailures.add(type + "_verification_failed");
+                    listener.status("AGENT • VERIFICATION FAILED • " + type);
+                }
             }
 
             String screen = executor.readScreen();
-            if (screen != null && !screen.trim().isEmpty()) listener.status("AGENT • VERIFIED CURRENT UI");
+            if (screen != null && !screen.trim().isEmpty()) {
+                appendToolOutput("android.observe", screen.trim());
+                listener.status("AGENT • VERIFIED CURRENT UI");
+            }
             if (!lastFailures.isEmpty()) listener.status("AGENT • " + lastFailures.size() + " ACTION(S) NOT COMPLETED");
 
             if (!say.isEmpty() && lastFailures.isEmpty()) listener.reply(say);
@@ -101,6 +113,16 @@ public final class NovaAgentPlanner {
             lastFailures.add("planner_error");
             return false;
         }
+    }
+
+    private boolean verifyExpected(String expected) {
+        String screen = executor.readScreen();
+        if (screen == null || screen.trim().isEmpty()) return false;
+        String normalizedScreen = screen.toLowerCase(Locale.ROOT);
+        String normalizedExpected = expected.toLowerCase(Locale.ROOT);
+        boolean found = normalizedScreen.contains(normalizedExpected);
+        appendToolOutput("android.verify", "EXPECTED: " + expected + "\nFOUND: " + found);
+        return found;
     }
 
     private boolean executeExternalTool(String type, String value) {
