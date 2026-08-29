@@ -93,7 +93,6 @@ public final class NovaAgentPlanner {
             if (screen != null && !screen.trim().isEmpty()) listener.status("AGENT • VERIFIED CURRENT UI");
             if (!lastFailures.isEmpty()) listener.status("AGENT • " + lastFailures.size() + " ACTION(S) NOT COMPLETED");
 
-            // Don't present a confident completion message when execution had failures.
             if (!say.isEmpty() && lastFailures.isEmpty()) listener.reply(say);
             lastExecutionSuccessful = lastFailures.isEmpty();
             return true;
@@ -108,13 +107,33 @@ public final class NovaAgentPlanner {
         try {
             String result = executor.executeTool(type, value);
             if (result == null || result.trim().isEmpty()) return false;
-            appendToolOutput(type, result.trim());
+            String clean = result.trim();
+            appendToolOutput(type, clean);
             listener.status("TOOL • RESULT RECEIVED • " + type);
+            if (isToolFailure(clean)) {
+                listener.status("TOOL • ACTION FAILED • " + type);
+                return false;
+            }
             return true;
         } catch (Exception e) {
             Log.e(TAG, "TOOL ERROR: " + type, e);
             return false;
         }
+    }
+
+    private boolean isToolFailure(String result) {
+        String lower = result.toLowerCase(Locale.ROOT);
+        return lower.startsWith("tool error")
+                || lower.contains("confirmation required")
+                || lower.contains("accessibility not connected")
+                || lower.contains("android • failed")
+                || lower.contains("click failed")
+                || lower.contains("no matches")
+                || lower.contains("http 4")
+                || lower.contains("http 5")
+                || lower.contains("blocked private/local address")
+                || lower.contains("too many redirects")
+                || lower.contains("file •") && lower.contains("failed");
     }
 
     private void appendToolOutput(String type, String result) {
