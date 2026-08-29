@@ -107,6 +107,39 @@ public class GestureAccessibilityService extends AccessibilityService {
         return false;
     }
 
+    /** Long-clicks the first UI element matching the supplied text, content description, or hint. */
+    public boolean longClickText(String requested) {
+        if (requested == null || requested.trim().isEmpty()) return false;
+        AccessibilityNodeInfo root = getRootInActiveWindow(); if (root == null) return false;
+        AccessibilityNodeInfo target = findTextNode(root, requested.trim().toLowerCase());
+        if (target == null) return false;
+        if (target.isEnabled() && target.isLongClickable() && target.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) return true;
+        AccessibilityNodeInfo parent = target.getParent();
+        while (parent != null) {
+            if (parent.isEnabled() && parent.isLongClickable() && parent.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) return true;
+            parent = parent.getParent();
+        }
+        return longPressCoordinatesForNode(target);
+    }
+
+    /** Performs a short tap at absolute screen coordinates through AccessibilityService. */
+    public boolean clickCoordinates(int x, int y) {
+        Point size = getScreenSize();
+        if (x < 0 || y < 0 || x >= size.x || y >= size.y) return false;
+        Path path = new Path(); path.moveTo(x, y);
+        GestureDescription.StrokeDescription stroke = new GestureDescription.StrokeDescription(path, 0, 1);
+        return dispatchGesture(new GestureDescription.Builder().addStroke(stroke).build(), null, null);
+    }
+
+    private boolean longPressCoordinatesForNode(AccessibilityNodeInfo node) {
+        android.graphics.Rect bounds = new android.graphics.Rect(); node.getBoundsInScreen(bounds);
+        if (bounds.isEmpty()) return false;
+        float x = bounds.centerX(); float y = bounds.centerY();
+        Path path = new Path(); path.moveTo(x, y);
+        GestureDescription.StrokeDescription stroke = new GestureDescription.StrokeDescription(path, 0, 650);
+        return dispatchGesture(new GestureDescription.Builder().addStroke(stroke).build(), null, null);
+    }
+
     /** Sets text on the best matching editable accessibility node. */
     public boolean typeText(String requested, String text) {
         if (text == null) return false;
