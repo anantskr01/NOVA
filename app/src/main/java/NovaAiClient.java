@@ -29,30 +29,31 @@ public final class NovaAiClient {
         executor.execute(() -> {
             HttpURLConnection connection = null;
             try {
-                String urlText = endpoint == null ? "" : endpoint.trim();
+                String urlText = normalizeEndpoint(endpoint);
                 if (urlText.isEmpty()) throw new IllegalArgumentException("AI endpoint is not configured");
 
+                boolean localOllama = isLocalOllamaEndpoint(urlText);
+                boolean responsesApi = isResponsesEndpoint(urlText);
                 URL url = new URL(urlText);
                 connection = (HttpURLConnection) url.openConnection();
                 connection.setRequestMethod("POST");
                 connection.setConnectTimeout(12000);
-                connection.setReadTimeout(30000);
+                connection.setReadTimeout(60000);
                 connection.setDoOutput(true);
                 connection.setRequestProperty("Content-Type", "application/json");
                 connection.setRequestProperty("Accept", "application/json");
-                if (apiKey != null && !apiKey.trim().isEmpty()) {
+
+                // Ollama is local to the user's LAN. Never forward a stored cloud API key to it.
+                if (!localOllama && apiKey != null && !apiKey.trim().isEmpty()) {
                     connection.setRequestProperty("Authorization", "Bearer " + apiKey.trim());
                 }
 
-                boolean responsesApi = isResponsesEndpoint(urlText);
                 JSONObject body = new JSONObject();
-                body.put("model", model == null || model.trim().isEmpty() ? "gpt-5.6-luna" : model.trim());
+                body.put("model", model == null || model.trim().isEmpty() ? "qwen2.5:1.5b" : model.trim());
 
                 if (responsesApi) {
-                    // OpenAI Responses API: the same conversation is supplied as input items.
                     body.put("input", messages);
                 } else {
-                    // Keep compatibility with OpenAI-compatible Chat Completions endpoints.
                     body.put("messages", messages);
                     body.put("temperature", 0.2);
                 }
@@ -83,6 +84,18 @@ public final class NovaAiClient {
         });
     }
 
+    private String normalizeEndpoint(String endpoint) {
+        String value = endpoint == null ? "" : endpoint.trim();
+        if (value.endsWith("/v1")) return value + "/chat/completions";
+        if (value.endsWith("/v1/")) return value + "chat/completions";
+        return value;
+    }
+
+    private boolean isLocalOllamaEndpoint(String endpoint) {
+        String normalized = endpoint == null ? "" : endpoint.toLowerCase();
+        return normalized.contains(":11434/") || normalized.contains("127.0.0.1:11434") || normalized.contains("localhost:11434");
+    }
+
     private boolean isResponsesEndpoint(String endpoint) {
         String normalized = endpoint == null ? "" : endpoint.trim().toLowerCase();
         return normalized.endsWith("/responses") || normalized.contains("/v1/responses?");
@@ -97,8 +110,6 @@ public final class NovaAiClient {
     }
 
     private String extractResponsesText(JSONObject json) {
-        // The Responses API exposes output_text in SDKs; raw HTTP responses contain
-        // output message items whose content parts have type=output_text.
         String direct = json.optString("output_text", "");
         if (!direct.trim().isEmpty()) return direct;
 
