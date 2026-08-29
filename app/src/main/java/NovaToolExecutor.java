@@ -57,6 +57,7 @@ public final class NovaToolExecutor {
                 case "click_text": return clickText(value);
                 case "click_index": return clickIndex(value);
                 case "read_screen": return readScreen();
+                case "verify_screen_contains": return verifyScreenContains(value);
                 case "web.open":
                 case "web.fetch": return fetch(value);
                 case "web.search":
@@ -107,6 +108,23 @@ public final class NovaToolExecutor {
         GestureAccessibilityService service = GestureAccessibilityService.getInstance();
         if (service == null) return "ANDROID • ACCESSIBILITY NOT CONNECTED";
         return service.getUiSnapshot();
+    }
+
+    private String verifyScreenContains(String value) {
+        String expected = value == null ? "" : value.trim();
+        if (expected.isEmpty()) return "VERIFY • FAILED • MISSING EXPECTED TEXT";
+        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+        if (service == null) return "VERIFY • FAILED • ACCESSIBILITY NOT CONNECTED";
+        String snapshot = service.getUiSnapshot();
+        if (snapshot == null || snapshot.trim().isEmpty()) return "VERIFY • FAILED • EMPTY UI";
+        String normalizedSnapshot = snapshot.toLowerCase(Locale.ROOT);
+        String[] terms = expected.toLowerCase(Locale.ROOT).split("\\s+");
+        for (String term : terms) {
+            if (!term.isEmpty() && !normalizedSnapshot.contains(term)) {
+                return "VERIFY • FAILED • MISSING • " + expected;
+            }
+        }
+        return "VERIFY • PASSED • " + expected;
     }
 
     private String remember(String value) {
