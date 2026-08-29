@@ -69,6 +69,7 @@ public final class NovaAgentPlanner {
             }
 
             listener.status("AGENT • EXECUTING " + count + " STEPS");
+            boolean[] stepSucceeded = new boolean[count];
             for (int i = 0; i < count; i++) {
                 JSONObject action = actions.optJSONObject(i);
                 String stepLabel = "STEP " + (i + 1);
@@ -77,6 +78,19 @@ public final class NovaAgentPlanner {
                     lastStepResults.add(stepLabel + " • FAILED • invalid action");
                     continue;
                 }
+
+                // A step may declare a prerequisite with "requires": 1-based step number.
+                // A failed prerequisite blocks this step rather than executing it blindly.
+                int requiredStep = action.optInt("requires", 0);
+                if (requiredStep > 0) {
+                    if (requiredStep > i || !stepSucceeded[requiredStep - 1]) {
+                        lastFailures.add("dependency_blocked_step_" + (i + 1));
+                        lastStepResults.add(stepLabel + " • BLOCKED • requires STEP " + requiredStep);
+                        listener.status("AGENT • STEP BLOCKED • " + (i + 1) + " REQUIRES " + requiredStep);
+                        continue;
+                    }
+                }
+
                 String type = action.optString("type", "none").trim().toLowerCase(Locale.ROOT);
                 String value = action.optString("value", "").trim();
                 if (!registry.validate(type, value)) {
@@ -92,6 +106,7 @@ public final class NovaAgentPlanner {
                     continue;
                 }
                 if ("none".equals(type)) {
+                    stepSucceeded[i] = true;
                     lastStepResults.add(stepLabel + " • SKIPPED");
                     continue;
                 }
@@ -114,6 +129,7 @@ public final class NovaAgentPlanner {
                     lastStepResults.add(stepLabel + " • FAILED VERIFICATION • " + type);
                     listener.status("AGENT • VERIFICATION FAILED • " + type);
                 } else {
+                    stepSucceeded[i] = true;
                     lastStepResults.add(stepLabel + " • VERIFIED • " + type);
                 }
             }
