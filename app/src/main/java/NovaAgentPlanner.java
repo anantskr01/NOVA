@@ -79,8 +79,6 @@ public final class NovaAgentPlanner {
                     continue;
                 }
 
-                // A step may declare a prerequisite with "requires": 1-based step number.
-                // A failed prerequisite blocks this step rather than executing it blindly.
                 int requiredStep = action.optInt("requires", 0);
                 if (requiredStep > 0) {
                     if (requiredStep > i || !stepSucceeded[requiredStep - 1]) {
