@@ -96,10 +96,7 @@ public final class NovaBrain {
                 String appName = command.substring(5).trim();
                 if (!appName.isEmpty()) {
                     boolean opened = actions.execute("open_app", appName);
-                    if (opened) {
-                        reply("Done — " + appName + " is open.");
-                        return true;
-                    }
+                    if (opened) { reply("Done — " + appName + " is open."); return true; }
                 }
             }
         } catch (Exception e) { Log.e(TAG, "LOCAL COMMAND ERROR", e); }
@@ -116,7 +113,9 @@ public final class NovaBrain {
         try {
             GestureAccessibilityService service = GestureAccessibilityService.getInstance();
             if (service == null) return "Accessibility service is not connected.";
-            return service.getVisibleTextSummary();
+            String snapshot = service.getUiSnapshot();
+            if (snapshot == null || snapshot.trim().isEmpty()) return service.getVisibleTextSummary();
+            return snapshot;
         } catch (Exception e) { Log.e(TAG, "SCREEN READ ERROR", e); return "Unable to read current screen."; }
     }
     private boolean clickVisibleText(String text) {
