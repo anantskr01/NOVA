@@ -5,12 +5,12 @@ import android.content.SharedPreferences;
 
 /** Persistent task state for NOVA's bounded autonomous agent. */
 public final class NovaTaskStore {
-    public enum State { NOT_STARTED, WORKING, VERIFIED, COMPLETE, FAILED }
-    private static final String PREFS="nova_task_state",GOAL="goal",ITERATION="iteration",RETRIES="retries",CURRENT_STEP="current_step",COMPLETED_STEPS="completed_steps",FAILED_STEPS="failed_steps",REMAINING_GOAL="remaining_goal",LAST_RESULT="last_result",STEP_PROGRESS="step_progress",HISTORY="history",RUNNING="running",COMPLETED="completed",STATE="state",STARTED_AT="started_at",FINISHED_AT="finished_at";
+    public enum State { NOT_STARTED, WORKING, PAUSED, AWAITING_CONFIRMATION, VERIFIED, COMPLETE, FAILED }
+    private static final String PREFS="nova_task_state",GOAL="goal",ITERATION="iteration",RETRIES="retries",CURRENT_STEP="current_step",COMPLETED_STEPS="completed_steps",FAILED_STEPS="failed_steps",REMAINING_GOAL="remaining_goal",LAST_RESULT="last_result",STEP_PROGRESS="step_progress",HISTORY="history",RUNNING="running",COMPLETED="completed",STATE="state",STARTED_AT="started_at",FINISHED_AT="finished_at",PENDING_CONFIRMATION="pending_confirmation",PENDING_ACTION="pending_action";
     private static final int MAX_HISTORY_CHARS=12000,MAX_STEP_PROGRESS_CHARS=6000,MAX_GOAL_CHARS=4000;
     private final SharedPreferences prefs;
     public NovaTaskStore(Context context){prefs=context.getApplicationContext().getSharedPreferences(PREFS,Context.MODE_PRIVATE);}
-    public synchronized void begin(String goal){long now=System.currentTimeMillis();prefs.edit().putString(GOAL,trim(goal,MAX_GOAL_CHARS)).putInt(ITERATION,0).putInt(RETRIES,0).putInt(CURRENT_STEP,0).putString(COMPLETED_STEPS,"").putString(FAILED_STEPS,"").putString(REMAINING_GOAL,trim(goal,MAX_GOAL_CHARS)).putString(LAST_RESULT,"").putString(STEP_PROGRESS,"").putString(HISTORY,"").putBoolean(RUNNING,true).putBoolean(COMPLETED,false).putString(STATE,State.WORKING.name()).putLong(STARTED_AT,now).remove(FINISHED_AT).apply();}
+    public synchronized void begin(String goal){long now=System.currentTimeMillis();prefs.edit().putString(GOAL,trim(goal,MAX_GOAL_CHARS)).putInt(ITERATION,0).putInt(RETRIES,0).putInt(CURRENT_STEP,0).putString(COMPLETED_STEPS,"").putString(FAILED_STEPS,"").putString(REMAINING_GOAL,trim(goal,MAX_GOAL_CHARS)).putString(LAST_RESULT,"").putString(STEP_PROGRESS,"").putString(HISTORY,"").putBoolean(RUNNING,true).putBoolean(COMPLETED,false).putString(STATE,State.WORKING.name()).putBoolean(PENDING_CONFIRMATION,false).putString(PENDING_ACTION,"").putLong(STARTED_AT,now).remove(FINISHED_AT).apply();}
     public synchronized void setIteration(int v){prefs.edit().putInt(ITERATION,Math.max(0,v)).apply();} public synchronized int getIteration(){return prefs.getInt(ITERATION,0);}
     public synchronized int retries(){return prefs.getInt(RETRIES,0);} public synchronized int incrementRetries(){int n=retries()+1;prefs.edit().putInt(RETRIES,n).apply();return n;} public synchronized void resetRetries(){prefs.edit().putInt(RETRIES,0).apply();}
     public synchronized String getGoal(){return prefs.getString(GOAL,"");}
@@ -25,8 +25,13 @@ public final class NovaTaskStore {
     public synchronized State state(){try{return State.valueOf(prefs.getString(STATE,State.NOT_STARTED.name()));}catch(Exception ignored){return State.NOT_STARTED;}}
     public synchronized void setState(State state){prefs.edit().putString(STATE,(state==null?State.NOT_STARTED:state).name()).apply();}
     public synchronized long startedAt(){return prefs.getLong(STARTED_AT,0L);} public synchronized long finishedAt(){return prefs.getLong(FINISHED_AT,0L);}
+    public synchronized boolean hasPendingConfirmation(){return prefs.getBoolean(PENDING_CONFIRMATION,false);} public synchronized String pendingAction(){return prefs.getString(PENDING_ACTION,"");}
+    public synchronized void awaitConfirmation(String action){prefs.edit().putBoolean(RUNNING,false).putBoolean(COMPLETED,false).putBoolean(PENDING_CONFIRMATION,true).putString(PENDING_ACTION,trim(action,1000)).putString(STATE,State.AWAITING_CONFIRMATION.name()).apply();}
+    public synchronized void clearPendingConfirmation(){prefs.edit().putBoolean(PENDING_CONFIRMATION,false).putString(PENDING_ACTION,"").apply();}
+    public synchronized void pause(){prefs.edit().putBoolean(RUNNING,false).putBoolean(COMPLETED,false).putString(STATE,State.PAUSED.name()).apply();}
+    public synchronized void resume(){prefs.edit().putBoolean(RUNNING,true).putBoolean(COMPLETED,false).putString(STATE,State.WORKING.name()).apply();}
     public synchronized void markVerified(){setState(State.VERIFIED);resetRetries();} public synchronized void finish(){finish(false);}
-    public synchronized void finish(boolean completed){prefs.edit().putBoolean(RUNNING,false).putBoolean(COMPLETED,completed).putString(STATE,(completed?State.COMPLETE:State.FAILED).name()).putLong(FINISHED_AT,System.currentTimeMillis()).apply();}
+    public synchronized void finish(boolean completed){prefs.edit().putBoolean(RUNNING,false).putBoolean(COMPLETED,completed).putBoolean(PENDING_CONFIRMATION,false).putString(PENDING_ACTION,"").putString(STATE,(completed?State.COMPLETE:State.FAILED).name()).putLong(FINISHED_AT,System.currentTimeMillis()).apply();}
     public synchronized void clear(){prefs.edit().clear().apply();}
     private static String trim(String v,int max){if(v==null)return "";String s=v.trim();return s.length()>max?s.substring(0,max):s;} private static String trimTail(String v,int max){return v==null?"":v.length()>max?v.substring(v.length()-max):v;}
 }
