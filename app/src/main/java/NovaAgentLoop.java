@@ -32,6 +32,7 @@ public final class NovaAgentLoop {
 
     private void iterate(String goal, String endpoint, String apiKey, String model, int iteration) {
         taskStore.setIteration(iteration);
+        taskStore.setState(NovaTaskStore.State.WORKING);
         if (iteration >= MAX_ITERATIONS) {
             finish(false, "I stopped after the safe task limit. The task may need another instruction.");
             return;
@@ -58,7 +59,7 @@ public final class NovaAgentLoop {
             context.put("role", "system");
             context.put("content", "CURRENT SCREEN:\n" + safe(screen) + "\n\nMEMORY:\n" + safe(memory.factsSummary()) +
                     "\n\nLAST TASK RESULT:\n" + safe(previousResult) + "\n\nTASK HISTORY:\n" + safe(history) +
-                    "\n\nTASK:\n" + safe(goal));
+                    "\n\nTASK STATE:\n" + taskStore.state().name() + "\n\nTASK:\n" + safe(goal));
             messages.put(context);
             JSONObject user = new JSONObject();
             user.put("role", "user");
@@ -81,10 +82,13 @@ public final class NovaAgentLoop {
                         if (!combined.isEmpty()) taskStore.appendHistory("RESULT " + (iteration + 1) + ": " + compact(combined));
                         if (!parsed) { finish(false, "I couldn't execute the plan safely."); return; }
                         if (complete && planner.lastExecutionSuccessful() && planner.lastFailuresSummary().isEmpty()) {
+                            taskStore.markVerified();
+                            taskStore.appendHistory("TASK VERIFIED");
                             finish(true, null);
                             return;
                         }
                         if (complete) callback.status("AGENT • COMPLETION CLAIM NOT VERIFIED • RE-PLANNING");
+                        taskStore.setState(NovaTaskStore.State.WORKING);
                         iterate(goal, endpoint, apiKey, model, iteration + 1);
                     } catch (Exception e) { Log.e(TAG, "LOOP RESULT ERROR", e); finish(false, "I couldn't complete the task safely."); }
                 }
