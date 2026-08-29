@@ -12,6 +12,7 @@ public final class NovaTaskStore {
     private static final String ITERATION = "iteration";
     private static final String RETRIES = "retries";
     private static final String LAST_RESULT = "last_result";
+    private static final String STEP_PROGRESS = "step_progress";
     private static final String HISTORY = "history";
     private static final String RUNNING = "running";
     private static final String COMPLETED = "completed";
@@ -19,6 +20,7 @@ public final class NovaTaskStore {
     private static final String STARTED_AT = "started_at";
     private static final String FINISHED_AT = "finished_at";
     private static final int MAX_HISTORY_CHARS = 12000;
+    private static final int MAX_STEP_PROGRESS_CHARS = 6000;
 
     private final SharedPreferences prefs;
 
@@ -34,6 +36,7 @@ public final class NovaTaskStore {
                 .putInt(ITERATION, 0)
                 .putInt(RETRIES, 0)
                 .putString(LAST_RESULT, "")
+                .putString(STEP_PROGRESS, "")
                 .putString(HISTORY, "")
                 .putBoolean(RUNNING, true)
                 .putBoolean(COMPLETED, false)
@@ -75,6 +78,18 @@ public final class NovaTaskStore {
 
     public synchronized String lastResult() {
         return prefs.getString(LAST_RESULT, "");
+    }
+
+    public synchronized void setStepProgress(String progress) {
+        String value = progress == null ? "" : progress.trim();
+        if (value.length() > MAX_STEP_PROGRESS_CHARS) {
+            value = value.substring(value.length() - MAX_STEP_PROGRESS_CHARS);
+        }
+        prefs.edit().putString(STEP_PROGRESS, value).apply();
+    }
+
+    public synchronized String stepProgress() {
+        return prefs.getString(STEP_PROGRESS, "");
     }
 
     public synchronized void appendHistory(String entry) {
