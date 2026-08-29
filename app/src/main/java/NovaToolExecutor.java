@@ -18,7 +18,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
-/** Executes bounded web, memory, app-discovery and local-workspace tools for NOVA. */
+/** Executes bounded web, memory, Android UI, app-discovery and local-workspace tools for NOVA. */
 public final class NovaToolExecutor {
     private static final String TAG = "NovaToolExecutor";
     private static final int CONNECT_TIMEOUT_MS = 8000;
@@ -31,6 +31,7 @@ public final class NovaToolExecutor {
     private final File workspace;
     private final NovaMemory memory;
     private final NovaAppCatalog apps;
+    private final NovaActionEngine actions;
 
     public NovaToolExecutor(Context context) {
         Context app = context.getApplicationContext();
@@ -38,12 +39,24 @@ public final class NovaToolExecutor {
         if (!workspace.exists()) workspace.mkdirs();
         memory = new NovaMemory(app);
         apps = new NovaAppCatalog(app);
+        actions = new NovaActionEngine(app, new NovaActionEngine.Callback() {
+            @Override public void status(String text) { Log.d(TAG, "ACTION STATUS: " + text); }
+            @Override public void reply(String text) { Log.d(TAG, "ACTION REPLY: " + text); }
+        });
     }
 
     public String execute(String type, String value) {
         if (type == null) return null;
         try {
             switch (type.trim().toLowerCase(Locale.ROOT)) {
+                case "home": case "back": case "recents": case "notifications":
+                case "quick_settings": case "scroll_up": case "scroll_down":
+                case "swipe_left": case "swipe_right": case "open_url":
+                case "open_package": case "open_app": case "settings":
+                    return executeAndroid(type.trim().toLowerCase(Locale.ROOT), value);
+                case "click_text": return clickText(value);
+                case "click_index": return clickIndex(value);
+                case "read_screen": return readScreen();
                 case "web.open":
                 case "web.fetch": return fetch(value);
                 case "web.search":
@@ -56,12 +69,44 @@ public final class NovaToolExecutor {
                 case "files.create": return writeFile(value, true);
                 case "code.create": return writeFile(value, true);
                 case "code.modify": return writeFile(value, false);
+                case "communication.send_message":
+                case "communication.make_call":
+                    return "CONFIRMATION REQUIRED • " + type;
                 default: return null;
             }
         } catch (Exception e) {
             Log.e(TAG, "TOOL ERROR: " + type, e);
-            return null;
+            return "TOOL ERROR • " + e.getClass().getSimpleName();
         }
+    }
+
+    private String executeAndroid(String type, String value) {
+        boolean ok = actions.execute(type, value);
+        return ok ? "ANDROID • DONE • " + type : "ANDROID • FAILED • " + type;
+    }
+
+    private String clickText(String value) {
+        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+        if (service == null) return "ANDROID • ACCESSIBILITY NOT CONNECTED";
+        if (TextUtils.isEmpty(value)) return "ANDROID • CLICK TEXT • MISSING TEXT";
+        return service.clickText(value.trim()) ? "ANDROID • CLICKED • " + value.trim() : "ANDROID • CLICK FAILED • " + value.trim();
+    }
+
+    private String clickIndex(String value) {
+        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+        if (service == null) return "ANDROID • ACCESSIBILITY NOT CONNECTED";
+        try {
+            int index = Integer.parseInt(value == null ? "" : value.trim());
+            return service.clickVisibleIndex(index) ? "ANDROID • CLICKED INDEX • " + index : "ANDROID • CLICK INDEX FAILED • " + index;
+        } catch (NumberFormatException e) {
+            return "ANDROID • CLICK INDEX • INVALID INDEX";
+        }
+    }
+
+    private String readScreen() {
+        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+        if (service == null) return "ANDROID • ACCESSIBILITY NOT CONNECTED";
+        return service.getUiSnapshot();
     }
 
     private String remember(String value) {
@@ -150,34 +195,27 @@ public final class NovaToolExecutor {
         String[] parts = ip.split("\\.");
         if (parts.length != 4) return false;
         try {
-            int a = Integer.parseInt(parts[0]);
-            int b = Integer.parseInt(parts[1]);
+            int a = Integer.parseInt(parts[0]); int b = Integer.parseInt(parts[1]);
             return a == 10 || a == 127 || (a == 172 && b >= 16 && b <= 31)
                     || (a == 192 && b == 168) || (a == 169 && b == 254);
         } catch (NumberFormatException ignored) { return true; }
     }
 
     private String readFile(String value) throws Exception {
-        String path = parsePath(value);
-        if (path == null) return null;
-        File file = resolve(path);
-        if (!file.isFile()) return null;
+        String path = parsePath(value); if (path == null) return null;
+        File file = resolve(path); if (!file.isFile()) return null;
         try (FileInputStream in = new FileInputStream(file)) { return readBounded(in, MAX_FILE_CHARS); }
     }
 
     private String writeFile(String value, boolean createOnly) throws Exception {
         if (TextUtils.isEmpty(value)) return null;
         JSONObject request = new JSONObject(value);
-        String path = request.optString("path", "").trim();
-        String content = request.optString("content", "");
+        String path = request.optString("path", "").trim(); String content = request.optString("content", "");
         if (path.isEmpty() || content.length() > MAX_FILE_CHARS) return null;
-        File file = resolve(path);
-        if (createOnly && file.exists()) return null;
+        File file = resolve(path); if (createOnly && file.exists()) return null;
         File parent = file.getParentFile();
         if (parent != null && !parent.exists() && !parent.mkdirs()) return null;
-        try (FileOutputStream out = new FileOutputStream(file, false)) {
-            out.write(content.getBytes(StandardCharsets.UTF_8));
-        }
+        try (FileOutputStream out = new FileOutputStream(file, false)) { out.write(content.getBytes(StandardCharsets.UTF_8)); }
         return "FILE • " + (createOnly ? "CREATED" : "WRITTEN") + " • " + path;
     }
 
@@ -185,8 +223,7 @@ public final class NovaToolExecutor {
         if (TextUtils.isEmpty(value)) return null;
         String trimmed = value.trim();
         if (trimmed.startsWith("{")) {
-            try { return new JSONObject(trimmed).optString("path", "").trim(); }
-            catch (Exception ignored) { return null; }
+            try { return new JSONObject(trimmed).optString("path", "").trim(); } catch (Exception ignored) { return null; }
         }
         return trimmed;
     }
