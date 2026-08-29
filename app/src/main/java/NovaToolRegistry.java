@@ -41,6 +41,7 @@ public final class NovaToolRegistry {
         register("click_index", "Activate a numbered visible accessibility item", false);
         register("search", "Perform a web search", false);
         register("read_screen", "Inspect the currently visible accessibility UI", false);
+        register("verify_screen_contains", "Verify that visible accessibility UI contains expected text", false);
         register("settings", "Open Android settings", false);
         register("none", "No operation", false);
 
