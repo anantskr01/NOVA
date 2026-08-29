@@ -4,9 +4,7 @@ import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.Bundle;
 import android.provider.Settings;
-import android.view.accessibility.AccessibilityNodeInfo;
 
 /** Central, permission-aware action layer used by voice, text and AI plans. */
 public final class NovaActionEngine {
@@ -27,5 +25,9 @@ public final class NovaActionEngine {
     }
     public boolean global(int action){GestureAccessibilityService service=GestureAccessibilityService.getInstance();if(service==null){callback.status("ACCESSIBILITY NOT CONNECTED");return false;}return service.performGlobalActionPublic(action);}
     private boolean swipe(String direction){GestureAccessibilityService service=GestureAccessibilityService.getInstance();if(service==null){callback.status("ACCESSIBILITY NOT CONNECTED");return false;}if("up".equals(direction))service.swipeUp();else if("down".equals(direction))service.swipeDown();else if("left".equals(direction))service.swipeLeft();else service.swipeRight();return true;}
+    public boolean clickText(String value){GestureAccessibilityService s=GestureAccessibilityService.getInstance();return s!=null&&s.clickText(value);}
+    public boolean longClickText(String value){GestureAccessibilityService s=GestureAccessibilityService.getInstance();return s!=null&&s.longClickText(value);}
+    public boolean clickCoordinates(int x,int y){GestureAccessibilityService s=GestureAccessibilityService.getInstance();return s!=null&&s.clickCoordinates(x,y);}
+    public boolean typeText(String target,String text){GestureAccessibilityService s=GestureAccessibilityService.getInstance();return s!=null&&s.typeText(target,text);}
     private void launch(Intent intent){intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);context.startActivity(intent);}
 }
