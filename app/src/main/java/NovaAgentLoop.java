@@ -8,6 +8,7 @@ import org.json.JSONObject;
 public final class NovaAgentLoop {
     private static final String TAG = "NovaAgentLoop";
     private static final int MAX_ITERATIONS = 4;
+    private static final int MAX_RETRIES = 2;
     public interface Callback { void status(String text); void reply(String text); }
     private final NovaAiClient ai;
     private final NovaAgentPlanner planner;
@@ -59,7 +60,8 @@ public final class NovaAgentLoop {
             context.put("role", "system");
             context.put("content", "CURRENT SCREEN:\n" + safe(screen) + "\n\nMEMORY:\n" + safe(memory.factsSummary()) +
                     "\n\nLAST TASK RESULT:\n" + safe(previousResult) + "\n\nTASK HISTORY:\n" + safe(history) +
-                    "\n\nTASK STATE:\n" + taskStore.state().name() + "\n\nTASK:\n" + safe(goal));
+                    "\n\nTASK STATE:\n" + taskStore.state().name() + "\n\nTASK RETRIES:\n" + taskStore.retries() +
+                    "\n\nTASK:\n" + safe(goal));
             messages.put(context);
             JSONObject user = new JSONObject();
             user.put("role", "user");
@@ -71,7 +73,17 @@ public final class NovaAgentLoop {
                         callback.status("AGENT • PLAN RECEIVED");
                         taskStore.appendHistory("PLAN " + (iteration + 1) + ": " + compact(response));
                         JSONObject plan = parseObject(response);
-                        if (plan == null) { finish(false, "I couldn't understand the plan returned by my AI core."); return; }
+                        if (plan == null) {
+                            int retry = taskStore.incrementRetries();
+                            taskStore.appendHistory("PLAN PARSE FAILURE; retry=" + retry);
+                            if (retry >= MAX_RETRIES) {
+                                finish(false, "I couldn't understand a valid plan after the safe retry limit.");
+                            } else {
+                                callback.status("AGENT • INVALID PLAN • RETRY " + retry + "/" + MAX_RETRIES);
+                                iterate(goal, endpoint, apiKey, model, iteration + 1);
+                            }
+                            return;
+                        }
                         boolean complete = plan.optBoolean("complete", false);
                         boolean parsed = planner.execute(plan.toString());
                         String toolOutput = planner.lastToolOutput();
@@ -80,17 +92,34 @@ public final class NovaAgentLoop {
                                 (toolOutput.isEmpty() ? "" : "TOOL OUTPUT:\n" + toolOutput);
                         taskStore.setLastResult(combined);
                         if (!combined.isEmpty()) taskStore.appendHistory("RESULT " + (iteration + 1) + ": " + compact(combined));
-                        if (!parsed) { finish(false, "I couldn't execute the plan safely."); return; }
-                        if (complete && planner.lastExecutionSuccessful() && planner.lastFailuresSummary().isEmpty()) {
+                        boolean executionSuccessful = parsed && planner.lastExecutionSuccessful() && failureOutput.isEmpty();
+                        if (!parsed || !executionSuccessful) {
+                            int retry = taskStore.incrementRetries();
+                            taskStore.setState(NovaTaskStore.State.WORKING);
+                            taskStore.appendHistory("ACTION FAILURE; retry=" + retry);
+                            if (retry >= MAX_RETRIES) {
+                                finish(false, "I stopped after the safe retry limit because an action could not be completed reliably.");
+                            } else {
+                                callback.status("AGENT • ACTION FAILED • RE-PLAN " + retry + "/" + MAX_RETRIES);
+                                iterate(goal, endpoint, apiKey, model, iteration + 1);
+                            }
+                            return;
+                        }
+                        taskStore.resetRetries();
+                        if (complete) {
                             taskStore.markVerified();
                             taskStore.appendHistory("TASK VERIFIED");
                             finish(true, null);
                             return;
                         }
-                        if (complete) callback.status("AGENT • COMPLETION CLAIM NOT VERIFIED • RE-PLANNING");
                         taskStore.setState(NovaTaskStore.State.WORKING);
                         iterate(goal, endpoint, apiKey, model, iteration + 1);
-                    } catch (Exception e) { Log.e(TAG, "LOOP RESULT ERROR", e); finish(false, "I couldn't complete the task safely."); }
+                    } catch (Exception e) {
+                        Log.e(TAG, "LOOP RESULT ERROR", e);
+                        int retry = taskStore.incrementRetries();
+                        if (retry >= MAX_RETRIES) finish(false, "I couldn't complete the task safely after the retry limit.");
+                        else iterate(goal, endpoint, apiKey, model, iteration + 1);
+                    }
                 }
                 @Override public void onError(String message) {
                     Log.e(TAG, "LOOP AI ERROR: " + message);
