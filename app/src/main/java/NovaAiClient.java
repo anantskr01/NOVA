@@ -31,6 +31,7 @@ public final class NovaAiClient {
             try {
                 String urlText = endpoint == null ? "" : endpoint.trim();
                 if (urlText.isEmpty()) throw new IllegalArgumentException("AI endpoint is not configured");
+
                 URL url = new URL(urlText);
                 connection = (HttpURLConnection) url.openConnection();
                 connection.setRequestMethod("POST");
@@ -38,14 +39,23 @@ public final class NovaAiClient {
                 connection.setReadTimeout(30000);
                 connection.setDoOutput(true);
                 connection.setRequestProperty("Content-Type", "application/json");
+                connection.setRequestProperty("Accept", "application/json");
                 if (apiKey != null && !apiKey.trim().isEmpty()) {
                     connection.setRequestProperty("Authorization", "Bearer " + apiKey.trim());
                 }
 
+                boolean responsesApi = isResponsesEndpoint(urlText);
                 JSONObject body = new JSONObject();
-                body.put("model", model == null || model.trim().isEmpty() ? "gpt-4o-mini" : model.trim());
-                body.put("messages", messages);
-                body.put("temperature", 0.2);
+                body.put("model", model == null || model.trim().isEmpty() ? "gpt-5.6-luna" : model.trim());
+
+                if (responsesApi) {
+                    // OpenAI Responses API: the same conversation is supplied as input items.
+                    body.put("input", messages);
+                } else {
+                    // Keep compatibility with OpenAI-compatible Chat Completions endpoints.
+                    body.put("messages", messages);
+                    body.put("temperature", 0.2);
+                }
 
                 byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
                 try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
@@ -53,17 +63,14 @@ public final class NovaAiClient {
                 int code = connection.getResponseCode();
                 InputStream stream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
                 String response = readAll(stream);
-                if (code < 200 || code >= 300) throw new IllegalStateException("AI HTTP " + code + ": " + response);
+                if (code < 200 || code >= 300) {
+                    throw new IllegalStateException("AI HTTP " + code + ": " + response);
+                }
 
                 JSONObject json = new JSONObject(response);
-                String text = "";
-                JSONArray choices = json.optJSONArray("choices");
-                if (choices != null && choices.length() > 0) {
-                    JSONObject choice = choices.optJSONObject(0);
-                    JSONObject message = choice == null ? null : choice.optJSONObject("message");
-                    text = message == null ? "" : message.optString("content", "");
-                }
+                String text = responsesApi ? extractResponsesText(json) : extractChatText(json);
                 if (text.trim().isEmpty()) throw new IllegalStateException("AI returned no text");
+
                 String finalText = text.trim();
                 main.post(() -> callback.onResult(finalText));
             } catch (Exception e) {
@@ -74,6 +81,49 @@ public final class NovaAiClient {
                 if (connection != null) connection.disconnect();
             }
         });
+    }
+
+    private boolean isResponsesEndpoint(String endpoint) {
+        String normalized = endpoint == null ? "" : endpoint.trim().toLowerCase();
+        return normalized.endsWith("/responses") || normalized.contains("/v1/responses?");
+    }
+
+    private String extractChatText(JSONObject json) {
+        JSONArray choices = json.optJSONArray("choices");
+        if (choices == null || choices.length() == 0) return "";
+        JSONObject choice = choices.optJSONObject(0);
+        JSONObject message = choice == null ? null : choice.optJSONObject("message");
+        return message == null ? "" : message.optString("content", "");
+    }
+
+    private String extractResponsesText(JSONObject json) {
+        // The Responses API exposes output_text in SDKs; raw HTTP responses contain
+        // output message items whose content parts have type=output_text.
+        String direct = json.optString("output_text", "");
+        if (!direct.trim().isEmpty()) return direct;
+
+        JSONArray output = json.optJSONArray("output");
+        if (output == null) return "";
+
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < output.length(); i++) {
+            JSONObject item = output.optJSONObject(i);
+            if (item == null) continue;
+            JSONArray content = item.optJSONArray("content");
+            if (content == null) continue;
+            for (int j = 0; j < content.length(); j++) {
+                JSONObject part = content.optJSONObject(j);
+                if (part == null) continue;
+                if ("output_text".equals(part.optString("type", ""))) {
+                    String value = part.optString("text", "");
+                    if (!value.isEmpty()) {
+                        if (text.length() > 0) text.append('\n');
+                        text.append(value);
+                    }
+                }
+            }
+        }
+        return text.toString();
     }
 
     private String readAll(InputStream stream) throws Exception {
