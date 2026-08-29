@@ -10,6 +10,7 @@ public final class NovaTaskStore {
     private static final String PREFS = "nova_task_state";
     private static final String GOAL = "goal";
     private static final String ITERATION = "iteration";
+    private static final String RETRIES = "retries";
     private static final String LAST_RESULT = "last_result";
     private static final String HISTORY = "history";
     private static final String RUNNING = "running";
@@ -31,6 +32,7 @@ public final class NovaTaskStore {
         prefs.edit()
                 .putString(GOAL, goal == null ? "" : goal.trim())
                 .putInt(ITERATION, 0)
+                .putInt(RETRIES, 0)
                 .putString(LAST_RESULT, "")
                 .putString(HISTORY, "")
                 .putBoolean(RUNNING, true)
@@ -47,6 +49,20 @@ public final class NovaTaskStore {
 
     public synchronized int getIteration() {
         return prefs.getInt(ITERATION, 0);
+    }
+
+    public synchronized int retries() {
+        return prefs.getInt(RETRIES, 0);
+    }
+
+    public synchronized int incrementRetries() {
+        int next = retries() + 1;
+        prefs.edit().putInt(RETRIES, next).apply();
+        return next;
+    }
+
+    public synchronized void resetRetries() {
+        prefs.edit().putInt(RETRIES, 0).apply();
     }
 
     public synchronized String getGoal() {
@@ -104,6 +120,7 @@ public final class NovaTaskStore {
 
     public synchronized void markVerified() {
         setState(State.VERIFIED);
+        resetRetries();
     }
 
     public synchronized void finish() {
