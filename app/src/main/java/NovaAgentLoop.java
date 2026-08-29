@@ -16,6 +16,8 @@ public final class NovaAgentLoop {
     private final NovaTaskStore taskStore;
     private final Callback callback;
     private boolean running;
+    private String previousPlanFingerprint = "";
+    private int repeatedPlanCount = 0;
 
     public NovaAgentLoop(NovaAiClient ai, NovaAgentPlanner planner, NovaMemory memory,
                          NovaTaskStore taskStore, Callback callback) {
@@ -26,6 +28,8 @@ public final class NovaAgentLoop {
     public synchronized void start(String goal, String endpoint, String apiKey, String model) {
         if (running) { callback.reply("I'm still working on the previous task."); return; }
         running = true;
+        previousPlanFingerprint = "";
+        repeatedPlanCount = 0;
         taskStore.begin(goal);
         taskStore.appendHistory("TASK STARTED: " + safe(goal));
         iterate(goal, endpoint, apiKey, model, 0);
@@ -84,6 +88,23 @@ public final class NovaAgentLoop {
                             else { callback.status("AGENT • INVALID PLAN • RETRY " + retry + "/" + MAX_RETRIES); iterate(goal, endpoint, apiKey, model, iteration + 1); }
                             return;
                         }
+
+                        String fingerprint = planFingerprint(plan);
+                        if (!fingerprint.isEmpty() && fingerprint.equals(previousPlanFingerprint)) {
+                            repeatedPlanCount++;
+                            taskStore.appendHistory("REPEATED PLAN DETECTED; count=" + repeatedPlanCount);
+                            if (repeatedPlanCount >= 2) {
+                                finish(false, "I stopped because the same plan kept repeating without making progress.");
+                                return;
+                            }
+                            taskStore.incrementRetries();
+                            callback.status("AGENT • SAME PLAN • REQUESTING FRESH APPROACH");
+                            iterate(goal, endpoint, apiKey, model, iteration + 1);
+                            return;
+                        }
+                        previousPlanFingerprint = fingerprint;
+                        repeatedPlanCount = 0;
+
                         boolean complete = plan.optBoolean("complete", false);
                         String plannedSay = plan.optString("say", "").trim();
                         boolean parsed = planner.execute(plan.toString());
@@ -147,6 +168,23 @@ public final class NovaAgentLoop {
             }
             taskStore.setStepProgress(progress.toString());
         } catch (Exception e) { Log.w(TAG, "STEP PROGRESS ERROR", e); }
+    }
+
+    private String planFingerprint(JSONObject plan) {
+        try {
+            JSONArray actions = plan.optJSONArray("actions");
+            if (actions == null) return plan.optBoolean("complete", false) ? "complete" : "";
+            StringBuilder out = new StringBuilder();
+            for (int i = 0; i < actions.length(); i++) {
+                JSONObject a = actions.optJSONObject(i);
+                if (a == null) continue;
+                out.append(a.optString("type", "none").trim().toLowerCase(java.util.Locale.ROOT))
+                        .append('|').append(a.optString("value", "").trim())
+                        .append('|').append(a.optString("expect", "").trim())
+                        .append('|').append(a.optInt("requires", 0)).append(';');
+            }
+            return out.toString();
+        } catch (Exception e) { return ""; }
     }
 
     private synchronized void finish(boolean success, String message) {
