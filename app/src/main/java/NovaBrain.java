@@ -109,6 +109,13 @@ public final class NovaBrain {
         agentLoop.start(command, endpoint, apiKey, model);
     }
 
+    public boolean resumeTask() { return agentLoop.resume(); }
+    public boolean confirmPendingTask() { return agentLoop.confirmAndResume(); }
+    public void declinePendingTask() { agentLoop.cancelPendingConfirmation(); }
+    public NovaTaskStore.State taskState() { return taskStore.state(); }
+    public boolean hasPendingConfirmation() { return taskStore.hasPendingConfirmation(); }
+    public String pendingConfirmationAction() { return taskStore.pendingAction(); }
+
     private String readCurrentScreen() {
         try {
             GestureAccessibilityService service = GestureAccessibilityService.getInstance();
