@@ -37,6 +37,10 @@ public final class NovaAssistant {
     private static final String MODEL = "model";
     private static final String WAKE_PHRASE = "hey nova";
 
+    // Current NOVA development machine / LAN Ollama configuration.
+    private static final String LOCAL_ENDPOINT = "http://192.168.29.210:11434/v1/chat/completions";
+    private static final String LOCAL_MODEL = "qwen2.5:1.5b";
+
     private final Context context;
     private final Listener listener;
     private final SharedPreferences prefs;
@@ -49,6 +53,17 @@ public final class NovaAssistant {
         this.listener = listener;
         prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         secureStore = new NovaSecureStore(this.context);
+
+        // Prefer the local Ollama brain for this development build. Existing OpenAI
+        // endpoint settings are migrated automatically, while the stored API key is
+        // left untouched in the secure store and is never sent to the local endpoint.
+        String savedEndpoint = prefs.getString(ENDPOINT, "").trim();
+        if (savedEndpoint.isEmpty() || savedEndpoint.contains("api.openai.com")) {
+            prefs.edit()
+                    .putString(ENDPOINT, LOCAL_ENDPOINT)
+                    .putString(MODEL, LOCAL_MODEL)
+                    .apply();
+        }
 
         brain = new NovaBrain(this.context, new NovaBrain.Listener() {
             @Override public void status(String text) {
@@ -73,7 +88,7 @@ public final class NovaAssistant {
         prefs.edit()
                 .putString(ENDPOINT, endpoint == null ? "" : endpoint.trim())
                 .putString(MODEL, model == null || model.trim().isEmpty()
-                        ? "gpt-4o-mini" : model.trim())
+                        ? LOCAL_MODEL : model.trim())
                 .apply();
 
         secureStore.putApiKey(apiKey == null ? "" : apiKey.trim());
@@ -81,11 +96,11 @@ public final class NovaAssistant {
     }
 
     public String getEndpoint() {
-        return prefs.getString(ENDPOINT, "");
+        return prefs.getString(ENDPOINT, LOCAL_ENDPOINT);
     }
 
     public String getModel() {
-        return prefs.getString(MODEL, "gpt-4o-mini");
+        return prefs.getString(MODEL, LOCAL_MODEL);
     }
 
     public boolean hasAiCore() {
