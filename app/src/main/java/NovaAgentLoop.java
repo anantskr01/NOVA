@@ -42,6 +42,7 @@ public final class NovaAgentLoop {
         String screen = planner.currentScreen();
         String failures = planner.lastFailuresSummary();
         String previousResult = taskStore.lastResult();
+        String stepProgress = taskStore.stepProgress();
         String history = taskStore.history();
         try {
             JSONArray messages = new JSONArray();
@@ -59,13 +60,13 @@ public final class NovaAgentLoop {
             JSONObject context = new JSONObject();
             context.put("role", "system");
             context.put("content", "CURRENT SCREEN:\n" + safe(screen) + "\n\nMEMORY:\n" + safe(memory.factsSummary()) +
-                    "\n\nLAST TASK RESULT:\n" + safe(previousResult) + "\n\nTASK HISTORY:\n" + safe(history) +
-                    "\n\nTASK STATE:\n" + taskStore.state().name() + "\n\nTASK RETRIES:\n" + taskStore.retries() +
-                    "\n\nTASK:\n" + safe(goal));
+                    "\n\nLAST TASK RESULT:\n" + safe(previousResult) + "\n\nSTEP PROGRESS:\n" + safe(stepProgress) +
+                    "\n\nTASK HISTORY:\n" + safe(history) + "\n\nTASK STATE:\n" + taskStore.state().name() +
+                    "\n\nTASK RETRIES:\n" + taskStore.retries() + "\n\nTASK:\n" + safe(goal));
             messages.put(context);
             JSONObject user = new JSONObject();
             user.put("role", "user");
-            user.put("content", iteration == 0 ? goal : "The previous step did not fully complete the task. Fresh state is provided above. Re-plan only what remains; avoid repeating failed actions and prefer another safe approach or an observation step.");
+            user.put("content", iteration == 0 ? goal : "The previous step did not fully complete the task. Fresh state and step progress are provided above. Re-plan only what remains; avoid repeating failed actions and prefer another safe approach or an observation step.");
             messages.put(user);
             ai.chat(endpoint, apiKey, model, messages, new NovaAiClient.Callback() {
                 @Override public void onResult(String response) {
@@ -76,33 +77,28 @@ public final class NovaAgentLoop {
                         if (plan == null) {
                             int retry = taskStore.incrementRetries();
                             taskStore.appendHistory("PLAN PARSE FAILURE; retry=" + retry);
-                            if (retry >= MAX_RETRIES) {
-                                finish(false, "I couldn't understand a valid plan after the safe retry limit.");
-                            } else {
-                                callback.status("AGENT • INVALID PLAN • RETRY " + retry + "/" + MAX_RETRIES);
-                                iterate(goal, endpoint, apiKey, model, iteration + 1);
-                            }
+                            if (retry >= MAX_RETRIES) finish(false, "I couldn't understand a valid plan after the safe retry limit.");
+                            else { callback.status("AGENT • INVALID PLAN • RETRY " + retry + "/" + MAX_RETRIES); iterate(goal, endpoint, apiKey, model, iteration + 1); }
                             return;
                         }
                         boolean complete = plan.optBoolean("complete", false);
                         boolean parsed = planner.execute(plan.toString());
                         String toolOutput = planner.lastToolOutput();
                         String failureOutput = planner.lastFailuresSummary();
+                        String stepSummary = planner.lastStepSummary();
+                        if (!stepSummary.isEmpty()) taskStore.setStepProgress(stepSummary);
                         String combined = (failureOutput.isEmpty() ? "" : "FAILURES: " + failureOutput + "\n") +
                                 (toolOutput.isEmpty() ? "" : "TOOL OUTPUT:\n" + toolOutput);
                         taskStore.setLastResult(combined);
+                        if (!stepSummary.isEmpty()) taskStore.appendHistory("STEPS " + (iteration + 1) + ": " + compact(stepSummary));
                         if (!combined.isEmpty()) taskStore.appendHistory("RESULT " + (iteration + 1) + ": " + compact(combined));
                         boolean executionSuccessful = parsed && planner.lastExecutionSuccessful() && failureOutput.isEmpty();
                         if (!parsed || !executionSuccessful) {
                             int retry = taskStore.incrementRetries();
                             taskStore.setState(NovaTaskStore.State.WORKING);
                             taskStore.appendHistory("ACTION FAILURE; retry=" + retry);
-                            if (retry >= MAX_RETRIES) {
-                                finish(false, "I stopped after the safe retry limit because an action could not be completed reliably.");
-                            } else {
-                                callback.status("AGENT • ACTION FAILED • RE-PLAN " + retry + "/" + MAX_RETRIES);
-                                iterate(goal, endpoint, apiKey, model, iteration + 1);
-                            }
+                            if (retry >= MAX_RETRIES) finish(false, "I stopped after the safe retry limit because an action could not be completed reliably.");
+                            else { callback.status("AGENT • ACTION FAILED • RE-PLAN " + retry + "/" + MAX_RETRIES); iterate(goal, endpoint, apiKey, model, iteration + 1); }
                             return;
                         }
                         taskStore.resetRetries();
