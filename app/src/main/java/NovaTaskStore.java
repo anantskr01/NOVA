@@ -5,6 +5,8 @@ import android.content.SharedPreferences;
 
 /** Lightweight persistent state for NOVA's current and most recent task. */
 public final class NovaTaskStore {
+    public enum State { NOT_STARTED, WORKING, VERIFIED, COMPLETE, FAILED }
+
     private static final String PREFS = "nova_task_state";
     private static final String GOAL = "goal";
     private static final String ITERATION = "iteration";
@@ -12,6 +14,7 @@ public final class NovaTaskStore {
     private static final String HISTORY = "history";
     private static final String RUNNING = "running";
     private static final String COMPLETED = "completed";
+    private static final String STATE = "state";
     private static final String STARTED_AT = "started_at";
     private static final String FINISHED_AT = "finished_at";
     private static final int MAX_HISTORY_CHARS = 12000;
@@ -32,6 +35,7 @@ public final class NovaTaskStore {
                 .putString(HISTORY, "")
                 .putBoolean(RUNNING, true)
                 .putBoolean(COMPLETED, false)
+                .putString(STATE, State.WORKING.name())
                 .putLong(STARTED_AT, now)
                 .remove(FINISHED_AT)
                 .apply();
@@ -80,12 +84,26 @@ public final class NovaTaskStore {
         return prefs.getBoolean(COMPLETED, false);
     }
 
+    public synchronized State state() {
+        String raw = prefs.getString(STATE, State.NOT_STARTED.name());
+        try { return State.valueOf(raw); }
+        catch (Exception ignored) { return State.NOT_STARTED; }
+    }
+
+    public synchronized void setState(State state) {
+        prefs.edit().putString(STATE, (state == null ? State.NOT_STARTED : state).name()).apply();
+    }
+
     public synchronized long startedAt() {
         return prefs.getLong(STARTED_AT, 0L);
     }
 
     public synchronized long finishedAt() {
         return prefs.getLong(FINISHED_AT, 0L);
+    }
+
+    public synchronized void markVerified() {
+        setState(State.VERIFIED);
     }
 
     public synchronized void finish() {
@@ -96,6 +114,7 @@ public final class NovaTaskStore {
         prefs.edit()
                 .putBoolean(RUNNING, false)
                 .putBoolean(COMPLETED, completed)
+                .putString(STATE, (completed ? State.COMPLETE : State.FAILED).name())
                 .putLong(FINISHED_AT, System.currentTimeMillis())
                 .apply();
     }
