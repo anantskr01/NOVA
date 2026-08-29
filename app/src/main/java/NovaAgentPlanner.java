@@ -11,12 +11,13 @@ import java.util.Locale;
 public final class NovaAgentPlanner {
     private static final String TAG="NovaAgentPlanner"; private static final int MAX_STEPS=8,MAX_RETRIES=1,MAX_TOOL_OUTPUT_CHARS=12000;
     private final ActionExecutor executor; private final Listener listener; private final NovaToolRegistry registry; private final List<String> lastFailures=new ArrayList<>(); private final List<String> lastStepResults=new ArrayList<>();
-    private boolean lastExecutionSuccessful,lastPlanClaimedComplete; private String lastToolOutput="";
+    private boolean lastExecutionSuccessful,lastPlanClaimedComplete,confirmationGranted; private String lastToolOutput="";
     public interface ActionExecutor { boolean execute(String type,String value); String readScreen(); boolean clickText(String text); boolean clickVisibleIndex(int index); default String executeTool(String type,String value){return null;} }
     public interface Listener { void status(String text); void reply(String text); }
     public NovaAgentPlanner(ActionExecutor executor,Listener listener){this.executor=executor;this.listener=listener;this.registry=new NovaToolRegistry();}
     public String toolSummary(){return registry.promptSummary();} public boolean isKnownTool(String type){return registry.contains(type);} public String currentScreen(){return executor.readScreen();}
     public boolean lastExecutionSuccessful(){return lastExecutionSuccessful;} public boolean lastPlanClaimedComplete(){return lastPlanClaimedComplete;} public String lastFailuresSummary(){return String.join(", ",lastFailures);} public String lastToolOutput(){return lastToolOutput;} public String lastStepSummary(){return String.join("\n",lastStepResults);}
+    public void grantConfirmation(){confirmationGranted=true;} public void clearConfirmation(){confirmationGranted=false;}
     public boolean execute(String rawPlan){
         lastFailures.clear();lastStepResults.clear();lastExecutionSuccessful=false;lastPlanClaimedComplete=false;lastToolOutput="";
         try{JSONObject plan=parseObject(rawPlan);if(plan==null)return false;String say=plan.optString("say","").trim();lastPlanClaimedComplete=plan.optBoolean("complete",false);JSONArray actions=plan.optJSONArray("actions");
@@ -27,7 +28,7 @@ public final class NovaAgentPlanner {
                 int required=action.optInt("requires",0);if(required>0&&(required>i||!succeeded[required-1])){lastFailures.add("dependency_blocked_step_"+(i+1));lastStepResults.add(label+" • BLOCKED • requires STEP "+required);continue;}
                 String type=action.optString("type","none").trim().toLowerCase(Locale.ROOT),value=action.optString("value","").trim();
                 if(!registry.validate(type,value)){lastFailures.add(type.isEmpty()?"unknown":type);lastStepResults.add(label+" • FAILED • invalid tool "+type);continue;}
-                if(registry.requiresConfirmation(type)){lastFailures.add(type+"_confirmation_required");lastStepResults.add(label+" • BLOCKED • confirmation required");listener.status("AGENT • CONFIRMATION REQUIRED • "+type);continue;}
+                if(registry.requiresConfirmation(type)&&!confirmationGranted){lastFailures.add(type+"_confirmation_required");lastStepResults.add(label+" • BLOCKED • confirmation required");listener.status("AGENT • CONFIRMATION REQUIRED • "+type);continue;}
                 if("none".equals(type)){succeeded[i]=true;lastStepResults.add(label+" • SKIPPED");continue;}
                 listener.status("AGENT • STEP "+(i+1)+"/"+count+" • "+type);
                 boolean ok=requiresExternalTool(type)?executeExternalTool(type,value):executeOne(type,value);
