@@ -94,7 +94,13 @@ public final class NovaBrain {
             if (containsAny(c, "what do you remember", "what do you know about me")) { reply(memory.factsSummary()); return true; }
             if (c.startsWith("open ")) {
                 String appName = command.substring(5).trim();
-                if (!appName.isEmpty() && actions.execute("open_app", appName)) return true;
+                if (!appName.isEmpty()) {
+                    boolean opened = actions.execute("open_app", appName);
+                    if (opened) {
+                        reply("Done — " + appName + " is open.");
+                        return true;
+                    }
+                }
             }
         } catch (Exception e) { Log.e(TAG, "LOCAL COMMAND ERROR", e); }
         return false;
