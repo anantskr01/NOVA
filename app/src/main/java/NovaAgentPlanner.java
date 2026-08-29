@@ -17,6 +17,7 @@ public final class NovaAgentPlanner {
     private final Listener listener;
     private final NovaToolRegistry registry;
     private final List<String> lastFailures = new ArrayList<>();
+    private final List<String> lastStepResults = new ArrayList<>();
     private boolean lastExecutionSuccessful;
     private boolean lastPlanClaimedComplete;
     private String lastToolOutput = "";
@@ -40,9 +41,14 @@ public final class NovaAgentPlanner {
     public boolean lastPlanClaimedComplete() { return lastPlanClaimedComplete; }
     public String lastFailuresSummary() { return String.join(", ", lastFailures); }
     public String lastToolOutput() { return lastToolOutput; }
+    public String lastStepSummary() { return String.join("\n", lastStepResults); }
 
     public boolean execute(String rawPlan) {
-        lastFailures.clear(); lastExecutionSuccessful = false; lastPlanClaimedComplete = false; lastToolOutput = "";
+        lastFailures.clear();
+        lastStepResults.clear();
+        lastExecutionSuccessful = false;
+        lastPlanClaimedComplete = false;
+        lastToolOutput = "";
         try {
             JSONObject plan = parseObject(rawPlan);
             if (plan == null) return false;
@@ -65,23 +71,30 @@ public final class NovaAgentPlanner {
             listener.status("AGENT • EXECUTING " + count + " STEPS");
             for (int i = 0; i < count; i++) {
                 JSONObject action = actions.optJSONObject(i);
+                String stepLabel = "STEP " + (i + 1);
                 if (action == null) {
                     lastFailures.add("invalid_action_" + (i + 1));
+                    lastStepResults.add(stepLabel + " • FAILED • invalid action");
                     continue;
                 }
                 String type = action.optString("type", "none").trim().toLowerCase(Locale.ROOT);
                 String value = action.optString("value", "").trim();
                 if (!registry.validate(type, value)) {
                     lastFailures.add(type.isEmpty() ? "unknown" : type);
+                    lastStepResults.add(stepLabel + " • FAILED • invalid tool " + type);
                     listener.status("AGENT • BLOCKED INVALID TOOL");
                     continue;
                 }
                 if (registry.requiresConfirmation(type)) {
                     lastFailures.add(type + "_confirmation_required");
+                    lastStepResults.add(stepLabel + " • BLOCKED • confirmation required");
                     listener.status("AGENT • CONFIRMATION REQUIRED • " + type);
                     continue;
                 }
-                if ("none".equals(type)) continue;
+                if ("none".equals(type)) {
+                    lastStepResults.add(stepLabel + " • SKIPPED");
+                    continue;
+                }
 
                 listener.status("AGENT • STEP " + (i + 1) + "/" + count + " • " + type);
                 boolean ok = type.contains(".") ? executeExternalTool(type, value) : executeOne(type, value);
@@ -91,13 +104,17 @@ public final class NovaAgentPlanner {
                 }
                 if (!ok) {
                     lastFailures.add(type);
+                    lastStepResults.add(stepLabel + " • FAILED • " + type);
                     continue;
                 }
 
                 String expected = action.optString("expect", "").trim();
                 if (!expected.isEmpty() && !verifyExpected(expected)) {
                     lastFailures.add(type + "_verification_failed");
+                    lastStepResults.add(stepLabel + " • FAILED VERIFICATION • " + type);
                     listener.status("AGENT • VERIFICATION FAILED • " + type);
+                } else {
+                    lastStepResults.add(stepLabel + " • VERIFIED • " + type);
                 }
             }
 
@@ -109,7 +126,6 @@ public final class NovaAgentPlanner {
             if (!lastFailures.isEmpty()) listener.status("AGENT • " + lastFailures.size() + " ACTION(S) NOT COMPLETED");
 
             if (!say.isEmpty() && lastFailures.isEmpty() && (count > 0 || lastPlanClaimedComplete)) listener.reply(say);
-            // An empty action list is only a successful completion when the model explicitly claims completion.
             lastExecutionSuccessful = lastFailures.isEmpty() && (count > 0 || lastPlanClaimedComplete);
             return true;
         } catch (Exception e) {
