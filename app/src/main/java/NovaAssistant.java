@@ -7,24 +7,7 @@ import android.util.Log;
 
 import java.util.Locale;
 
-/**
- * NOVA Assistant
- *
- * Thin front-end for voice/UI interaction.
- *
- * NovaAssistant handles:
- * - Wake phrase
- * - Voice input
- * - Text-to-speech
- * - AI settings
- *
- * NovaBrain handles:
- * - Understanding
- * - Memory
- * - Planning
- * - AI reasoning
- * - Action execution
- */
+/** NOVA voice/UI front-end. */
 public final class NovaAssistant {
 
     public interface Listener {
@@ -37,7 +20,6 @@ public final class NovaAssistant {
     private static final String MODEL = "model";
     private static final String WAKE_PHRASE = "hey nova";
 
-    // Current NOVA development machine / LAN Ollama configuration.
     private static final String LOCAL_ENDPOINT = "http://192.168.29.210:11434/v1/chat/completions";
     private static final String LOCAL_MODEL = "qwen2.5:1.5b";
 
@@ -54,9 +36,6 @@ public final class NovaAssistant {
         prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         secureStore = new NovaSecureStore(this.context);
 
-        // Prefer the local Ollama brain for this development build. Existing OpenAI
-        // endpoint settings are migrated automatically, while the stored API key is
-        // left untouched in the secure store and is never sent to the local endpoint.
         String savedEndpoint = prefs.getString(ENDPOINT, "").trim();
         if (savedEndpoint.isEmpty() || savedEndpoint.contains("api.openai.com")) {
             prefs.edit()
@@ -66,20 +45,13 @@ public final class NovaAssistant {
         }
 
         brain = new NovaBrain(this.context, new NovaBrain.Listener() {
-            @Override public void status(String text) {
-                NovaAssistant.this.status(text);
-            }
-
-            @Override public void reply(String text) {
-                NovaAssistant.this.say(text);
-            }
+            @Override public void status(String text) { NovaAssistant.this.status(text); }
+            @Override public void reply(String text) { NovaAssistant.this.say(text); }
         });
 
         tts = new TextToSpeech(this.context, result -> {
             if (result == TextToSpeech.SUCCESS) {
-                try {
-                    tts.setLanguage(Locale.getDefault());
-                } catch (Exception ignored) { }
+                try { tts.setLanguage(Locale.getDefault()); } catch (Exception ignored) { }
             }
         });
     }
@@ -87,42 +59,49 @@ public final class NovaAssistant {
     public void saveAiSettings(String endpoint, String apiKey, String model) {
         prefs.edit()
                 .putString(ENDPOINT, endpoint == null ? "" : endpoint.trim())
-                .putString(MODEL, model == null || model.trim().isEmpty()
-                        ? LOCAL_MODEL : model.trim())
+                .putString(MODEL, model == null || model.trim().isEmpty() ? LOCAL_MODEL : model.trim())
                 .apply();
-
         secureStore.putApiKey(apiKey == null ? "" : apiKey.trim());
         status("AI CORE CONFIGURED • KEY PROTECTED");
     }
 
-    public String getEndpoint() {
-        return prefs.getString(ENDPOINT, LOCAL_ENDPOINT);
-    }
-
-    public String getModel() {
-        return prefs.getString(MODEL, LOCAL_MODEL);
-    }
-
-    public boolean hasAiCore() {
-        return !getEndpoint().trim().isEmpty();
-    }
+    public String getEndpoint() { return prefs.getString(ENDPOINT, LOCAL_ENDPOINT); }
+    public String getModel() { return prefs.getString(MODEL, LOCAL_MODEL); }
+    public boolean hasAiCore() { return !getEndpoint().trim().isEmpty(); }
 
     public void handleVoice(String raw) {
         if (raw == null) return;
-
         String text = raw.trim();
         if (text.isEmpty()) return;
 
-        String lower = text.toLowerCase(Locale.ROOT);
-        int wake = lower.indexOf(WAKE_PHRASE);
+        // SpeechRecognizer commonly returns punctuation variants such as
+        // "Hey, NOVA". Normalize only for wake-word matching.
+        String normalized = text.toLowerCase(Locale.ROOT)
+                .replaceAll("[^\\p{L}\\p{N}]+", " ")
+                .trim();
+        int wake = normalized.indexOf(WAKE_PHRASE);
 
         if (wake >= 0) {
-            text = text.substring(wake + WAKE_PHRASE.length()).trim();
+            // Map the normalized wake phrase back to the original text by finding
+            // the first occurrence of "hey" and removing the following wake words.
+            String lowerOriginal = text.toLowerCase(Locale.ROOT);
+            int hey = lowerOriginal.indexOf("hey");
+            if (hey >= 0) {
+                String afterHey = text.substring(hey + 3).trim();
+                afterHey = afterHey.replaceFirst("^[,;:!?\\-]+\\s*", "");
+                if (afterHey.toLowerCase(Locale.ROOT).startsWith("nova")) {
+                    text = afterHey.substring(4).trim();
+                } else {
+                    text = normalized.substring(WAKE_PHRASE.length()).trim();
+                }
+            } else {
+                text = normalized.substring(WAKE_PHRASE.length()).trim();
+            }
             if (text.isEmpty()) {
                 say("Yes. I am listening.");
                 return;
             }
-        } else if (lower.equals("nova")) {
+        } else if (normalized.equals("nova")) {
             say("Yes. I am listening.");
             return;
         }
@@ -132,38 +111,24 @@ public final class NovaAssistant {
 
     public void handle(String command) {
         if (command == null) return;
-
         command = command.trim();
         if (command.isEmpty()) return;
-
         status("NOVA • " + command);
-
-        brain.handle(
-                command,
-                getEndpoint(),
-                secureStore.getApiKey(),
-                getModel()
-        );
+        brain.handle(command, getEndpoint(), secureStore.getApiKey(), getModel());
     }
 
     private void status(String text) {
         if (text == null || text.trim().isEmpty()) return;
-
         if (listener != null) listener.onStatus(text);
         Log.d(TAG, "STATUS: " + text);
     }
 
     private void say(String text) {
         if (text == null || text.trim().isEmpty()) return;
-
         status(text);
-
         if (tts != null) {
-            try {
-                tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NOVA");
-            } catch (Exception e) {
-                Log.e(TAG, "TTS ERROR", e);
-            }
+            try { tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NOVA"); }
+            catch (Exception e) { Log.e(TAG, "TTS ERROR", e); }
         }
     }
 
@@ -174,14 +139,8 @@ public final class NovaAssistant {
                 tts.shutdown();
                 tts = null;
             }
-        } catch (Exception e) {
-            Log.e(TAG, "TTS SHUTDOWN ERROR", e);
-        }
-
-        try {
-            brain.destroy();
-        } catch (Exception e) {
-            Log.e(TAG, "BRAIN SHUTDOWN ERROR", e);
-        }
+        } catch (Exception e) { Log.e(TAG, "TTS SHUTDOWN ERROR", e); }
+        try { brain.destroy(); }
+        catch (Exception e) { Log.e(TAG, "BRAIN SHUTDOWN ERROR", e); }
     }
 }
