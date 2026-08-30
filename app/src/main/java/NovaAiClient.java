@@ -17,7 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** OpenAI-compatible AI client. No API key is bundled in the APK. */
+/** OpenAI-compatible AI client with native Ollama /api/chat response support. */
 public final class NovaAiClient {
     public interface Callback { void onResult(String text); void onError(String message); }
 
@@ -56,6 +56,12 @@ public final class NovaAiClient {
                 } else {
                     body.put("messages", messages);
                     body.put("temperature", 0.2);
+                }
+
+                // Native Ollama /api/chat uses the same model/messages shape, but its response
+                // is {message:{role,content},done:true} rather than OpenAI's choices[0].message.
+                if (localOllama && urlText.toLowerCase().contains("/api/chat")) {
+                    body.put("stream", false);
                 }
 
                 byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
@@ -102,6 +108,14 @@ public final class NovaAiClient {
     }
 
     private String extractChatText(JSONObject json) {
+        // Native Ollama /api/chat response.
+        JSONObject ollamaMessage = json.optJSONObject("message");
+        if (ollamaMessage != null) {
+            String content = ollamaMessage.optString("content", "");
+            if (!content.trim().isEmpty()) return content;
+        }
+
+        // OpenAI-compatible /v1/chat/completions response.
         JSONArray choices = json.optJSONArray("choices");
         if (choices == null || choices.length() == 0) return "";
         JSONObject choice = choices.optJSONObject(0);
