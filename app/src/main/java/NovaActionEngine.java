@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.SystemClock;
 import android.provider.Settings;
 
 /** Central, permission-aware action layer used by voice, text and AI plans. */
@@ -25,7 +26,7 @@ public final class NovaActionEngine {
 
     public boolean execute(String type, String value) {
         try {
-            switch (type == null ? "none" : type) {
+            switch (type == null ? "none" : type.trim().toLowerCase()) {
                 case "home": return global(AccessibilityService.GLOBAL_ACTION_HOME);
                 case "back": return global(AccessibilityService.GLOBAL_ACTION_BACK);
                 case "recents": return global(AccessibilityService.GLOBAL_ACTION_RECENTS);
@@ -35,6 +36,17 @@ public final class NovaActionEngine {
                 case "scroll_down": return swipe("down");
                 case "swipe_left": return swipe("left");
                 case "swipe_right": return swipe("right");
+                case "wait":
+                    long delay;
+                    try { delay = Long.parseLong(value == null ? "500" : value.trim()); }
+                    catch (NumberFormatException ignored) { delay = 500L; }
+                    SystemClock.sleep(Math.max(100L, Math.min(delay, 2500L)));
+                    return true;
+                case "search":
+                    if (value == null || value.trim().isEmpty()) return false;
+                    launch(new Intent(Intent.ACTION_VIEW,
+                            Uri.parse("https://www.google.com/search?q=" + Uri.encode(value.trim()))));
+                    return true;
                 case "open_url":
                     if (value == null || value.trim().isEmpty()) return false;
                     launch(new Intent(Intent.ACTION_VIEW, Uri.parse(value.trim())));
@@ -60,7 +72,7 @@ public final class NovaActionEngine {
                     return false;
             }
         } catch (Exception e) {
-            callback.status("ACTION FAILED");
+            callback.status("ACTION FAILED • " + (type == null ? "UNKNOWN" : type));
             return false;
         }
     }
