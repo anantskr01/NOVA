@@ -20,7 +20,8 @@ public final class NovaAssistant {
     private static final String MODEL = "model";
     private static final String WAKE_PHRASE = "hey nova";
 
-    private static final String LOCAL_ENDPOINT = "http://192.168.29.210:11434/v1/chat/completions";
+    // Native Ollama is the most reliable local path for NOVA.
+    private static final String LOCAL_ENDPOINT = "http://192.168.29.210:11434/api/chat";
     private static final String LOCAL_MODEL = "qwen2.5:1.5b";
 
     private final Context context;
@@ -37,7 +38,14 @@ public final class NovaAssistant {
         secureStore = new NovaSecureStore(this.context);
 
         String savedEndpoint = prefs.getString(ENDPOINT, "").trim();
-        if (savedEndpoint.isEmpty() || savedEndpoint.contains("api.openai.com")) {
+        // Migrate old cloud/compatibility endpoints to the known-working native
+        // Ollama endpoint. This also fixes devices that retained an old endpoint
+        // in SharedPreferences after an app update.
+        if (savedEndpoint.isEmpty()
+                || savedEndpoint.contains("api.openai.com")
+                || savedEndpoint.contains(":11434/v1/chat/completions")
+                || savedEndpoint.contains("127.0.0.1:11434")
+                || savedEndpoint.contains("localhost:11434")) {
             prefs.edit()
                     .putString(ENDPOINT, LOCAL_ENDPOINT)
                     .putString(MODEL, LOCAL_MODEL)
@@ -82,8 +90,6 @@ public final class NovaAssistant {
         int wake = normalized.indexOf(WAKE_PHRASE);
 
         if (wake >= 0) {
-            // Map the normalized wake phrase back to the original text by finding
-            // the first occurrence of "hey" and removing the following wake words.
             String lowerOriginal = text.toLowerCase(Locale.ROOT);
             int hey = lowerOriginal.indexOf("hey");
             if (hey >= 0) {
