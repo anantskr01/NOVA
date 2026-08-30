@@ -7,6 +7,8 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.Locale;
+
 /** Persistent, user-controlled NOVA memory stored locally on the tablet. */
 public final class NovaMemory {
     private static final String PREFS = "nova_memory";
@@ -14,6 +16,7 @@ public final class NovaMemory {
     private static final String FACTS = "facts";
     private static final int MAX_MESSAGES = 14;
     private static final int MAX_FACTS = 30;
+    private static final int MAX_TEXT_CHARS = 2000;
 
     private final SharedPreferences prefs;
 
@@ -22,12 +25,13 @@ public final class NovaMemory {
     }
 
     public synchronized void remember(String role, String text) {
-        if (text == null || text.trim().isEmpty()) return;
+        if (text == null || text.trim().isEmpty() || looksSensitive(text)) return;
+        String safeText = limit(text.trim(), MAX_TEXT_CHARS);
         JSONArray history = read();
         JSONObject item = new JSONObject();
         try {
             item.put("role", role == null ? "user" : role);
-            item.put("content", text.trim());
+            item.put("content", safeText);
             history.put(item);
         } catch (JSONException ignored) { }
         while (history.length() > MAX_MESSAGES) history.remove(0);
@@ -36,12 +40,16 @@ public final class NovaMemory {
 
     public synchronized void rememberFact(String key, String value) {
         if (key == null || key.trim().isEmpty() || value == null || value.trim().isEmpty()) return;
+        String safeKey = key.trim();
+        String safeValue = value.trim();
+        if (looksSensitive(safeKey) || looksSensitive(safeValue)) return;
+
         JSONArray facts = readFacts();
         boolean replaced = false;
         for (int i = 0; i < facts.length(); i++) {
             JSONObject item = facts.optJSONObject(i);
-            if (item != null && key.equalsIgnoreCase(item.optString("key"))) {
-                try { item.put("value", value.trim()); } catch (JSONException ignored) { }
+            if (item != null && safeKey.equalsIgnoreCase(item.optString("key"))) {
+                try { item.put("value", limit(safeValue, 1000)); } catch (JSONException ignored) { }
                 replaced = true;
                 break;
             }
@@ -49,8 +57,8 @@ public final class NovaMemory {
         if (!replaced) {
             JSONObject item = new JSONObject();
             try {
-                item.put("key", key.trim());
-                item.put("value", value.trim());
+                item.put("key", safeKey);
+                item.put("value", limit(safeValue, 1000));
                 facts.put(item);
             } catch (JSONException ignored) { }
         }
@@ -90,5 +98,16 @@ public final class NovaMemory {
         String raw = prefs.getString(FACTS, "[]");
         try { return new JSONArray(raw); }
         catch (JSONException e) { return new JSONArray(); }
+    }
+
+    private boolean looksSensitive(String value) {
+        String lower = value.toLowerCase(Locale.ROOT);
+        return lower.contains("api key") || lower.contains("apikey") || lower.contains("password")
+                || lower.contains("passcode") || lower.contains("secret") || lower.contains("token")
+                || lower.contains("private key") || lower.contains("bearer ");
+    }
+
+    private String limit(String value, int max) {
+        return value.length() <= max ? value : value.substring(0, max);
     }
 }
