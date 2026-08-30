@@ -7,6 +7,8 @@ import android.net.Uri;
 import android.os.SystemClock;
 import android.provider.Settings;
 
+import java.util.Locale;
+
 /** Central, permission-aware action layer used by voice, text and AI plans. */
 public final class NovaActionEngine {
     public interface Callback {
@@ -25,8 +27,10 @@ public final class NovaActionEngine {
     }
 
     public boolean execute(String type, String value) {
+        String action = type == null ? "none" : type.trim().toLowerCase(Locale.ROOT);
+        String argument = value == null ? "" : value.trim();
         try {
-            switch (type == null ? "none" : type.trim().toLowerCase()) {
+            switch (action) {
                 case "home": return global(AccessibilityService.GLOBAL_ACTION_HOME);
                 case "back": return global(AccessibilityService.GLOBAL_ACTION_BACK);
                 case "recents": return global(AccessibilityService.GLOBAL_ACTION_RECENTS);
@@ -38,32 +42,21 @@ public final class NovaActionEngine {
                 case "swipe_right": return swipe("right");
                 case "wait":
                     long delay;
-                    try { delay = Long.parseLong(value == null ? "500" : value.trim()); }
-                    catch (NumberFormatException ignored) { delay = 500L; }
+                    try { delay = Long.parseLong(argument.isEmpty() ? "500" : argument); }
+                    catch (NumberFormatException ignored) { return false; }
                     SystemClock.sleep(Math.max(100L, Math.min(delay, 2500L)));
                     return true;
                 case "search":
-                    if (value == null || value.trim().isEmpty()) return false;
+                    if (argument.isEmpty()) return false;
                     launch(new Intent(Intent.ACTION_VIEW,
-                            Uri.parse("https://www.google.com/search?q=" + Uri.encode(value.trim()))));
+                            Uri.parse("https://www.google.com/search?q=" + Uri.encode(argument))));
                     return true;
                 case "open_url":
-                    if (value == null || value.trim().isEmpty()) return false;
-                    launch(new Intent(Intent.ACTION_VIEW, Uri.parse(value.trim())));
-                    return true;
+                    return openUrl(argument);
                 case "open_package":
-                    if (value == null || value.trim().isEmpty()) return false;
-                    Intent pkg = context.getPackageManager().getLaunchIntentForPackage(value.trim());
-                    if (pkg == null) return false;
-                    launch(pkg);
-                    return true;
+                    return openPackage(argument);
                 case "open_app":
-                    NovaAppCatalog catalog = apps;
-                    android.content.pm.ResolveInfo info = catalog.resolve(value);
-                    Intent appIntent = catalog.launchIntent(info);
-                    if (appIntent == null) return false;
-                    launch(appIntent);
-                    return true;
+                    return openApp(argument);
                 case "settings":
                     launch(new Intent(Settings.ACTION_SETTINGS));
                     return true;
@@ -72,9 +65,40 @@ public final class NovaActionEngine {
                     return false;
             }
         } catch (Exception e) {
-            callback.status("ACTION FAILED • " + (type == null ? "UNKNOWN" : type));
+            callback.status("ACTION FAILED • " + action);
             return false;
         }
+    }
+
+    private boolean openUrl(String value) {
+        if (value.isEmpty()) return false;
+        Uri uri = Uri.parse(value);
+        String scheme = uri.getScheme();
+        if (scheme == null || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+            callback.status("ACTION BLOCKED • UNSAFE URL SCHEME");
+            return false;
+        }
+        Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+        if (intent.resolveActivity(context.getPackageManager()) == null) return false;
+        launch(intent);
+        return true;
+    }
+
+    private boolean openPackage(String value) {
+        if (value.isEmpty() || value.indexOf(' ') >= 0) return false;
+        Intent intent = context.getPackageManager().getLaunchIntentForPackage(value);
+        if (intent == null) return false;
+        launch(intent);
+        return true;
+    }
+
+    private boolean openApp(String value) {
+        if (value.isEmpty()) return false;
+        android.content.pm.ResolveInfo info = apps.resolve(value);
+        Intent intent = apps.launchIntent(info);
+        if (intent == null) return false;
+        launch(intent);
+        return true;
     }
 
     public boolean global(int action) {
@@ -83,7 +107,9 @@ public final class NovaActionEngine {
             callback.status("ACCESSIBILITY NOT CONNECTED");
             return false;
         }
-        return service.performGlobalActionPublic(action);
+        boolean accepted = service.performGlobalActionPublic(action);
+        if (!accepted) callback.status("ACTION BLOCKED • ACCESSIBILITY REJECTED");
+        return accepted;
     }
 
     private boolean swipe(String direction) {
@@ -95,7 +121,8 @@ public final class NovaActionEngine {
         if ("up".equals(direction)) service.swipeUp();
         else if ("down".equals(direction)) service.swipeDown();
         else if ("left".equals(direction)) service.swipeLeft();
-        else service.swipeRight();
+        else if ("right".equals(direction)) service.swipeRight();
+        else return false;
         return true;
     }
 
