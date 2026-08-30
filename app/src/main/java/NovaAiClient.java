@@ -10,14 +10,14 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** OpenAI-compatible AI client. No API key is bundled in the APK. */
+/** Local/OpenAI-compatible AI client. No API key is bundled in the APK. */
 public final class NovaAiClient {
     public interface Callback { void onResult(String text); void onError(String message); }
 
@@ -34,38 +34,41 @@ public final class NovaAiClient {
                 URL url = new URL(urlText);
                 connection = (HttpURLConnection) url.openConnection();
                 connection.setRequestMethod("POST");
-                connection.setConnectTimeout(12000);
-                connection.setReadTimeout(30000);
+                connection.setConnectTimeout(8000);
+                connection.setReadTimeout(45000);
                 connection.setDoOutput(true);
-                connection.setRequestProperty("Content-Type", "application/json");
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                connection.setRequestProperty("Accept", "application/json");
                 if (apiKey != null && !apiKey.trim().isEmpty()) {
                     connection.setRequestProperty("Authorization", "Bearer " + apiKey.trim());
                 }
 
                 JSONObject body = new JSONObject();
-                body.put("model", model == null || model.trim().isEmpty() ? "gpt-4o-mini" : model.trim());
+                String cleanModel = model == null || model.trim().isEmpty() ? "qwen2.5:1.5b" : model.trim();
+                body.put("model", cleanModel);
                 body.put("messages", messages);
                 body.put("temperature", 0.2);
+                // Ollama streams by default. Disabling streaming keeps the response easy to parse
+                // and also works with OpenAI-compatible local servers.
+                body.put("stream", false);
 
                 byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
-                try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
+                connection.setFixedLengthStreamingMode(bytes.length);
+                try (java.io.OutputStream out = connection.getOutputStream()) { out.write(bytes); }
 
                 int code = connection.getResponseCode();
                 InputStream stream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
                 String response = readAll(stream);
-                if (code < 200 || code >= 300) throw new IllegalStateException("AI HTTP " + code + ": " + response);
+                if (code < 200 || code >= 300) throw new IllegalStateException("AI HTTP " + code + ": " + compact(response));
 
                 JSONObject json = new JSONObject(response);
-                String text = "";
-                JSONArray choices = json.optJSONArray("choices");
-                if (choices != null && choices.length() > 0) {
-                    JSONObject choice = choices.optJSONObject(0);
-                    JSONObject message = choice == null ? null : choice.optJSONObject("message");
-                    text = message == null ? "" : message.optString("content", "");
-                }
-                if (text.trim().isEmpty()) throw new IllegalStateException("AI returned no text");
+                String text = extractText(json);
+                if (text.trim().isEmpty()) throw new IllegalStateException("AI returned no text: " + compact(response));
                 String finalText = text.trim();
                 main.post(() -> callback.onResult(finalText));
+            } catch (SocketTimeoutException e) {
+                Log.e(TAG, "AI request timed out", e);
+                main.post(() -> callback.onError("AI server timed out. Make sure Ollama is running and reachable from the tablet."));
             } catch (Exception e) {
                 Log.e(TAG, "AI request failed", e);
                 String message = e.getMessage() == null ? "AI request failed" : e.getMessage();
@@ -74,6 +77,36 @@ public final class NovaAiClient {
                 if (connection != null) connection.disconnect();
             }
         });
+    }
+
+    /** Supports both OpenAI chat responses and native Ollama /api/chat responses. */
+    private String extractText(JSONObject json) {
+        // OpenAI-compatible: {"choices":[{"message":{"content":"..."}}]}
+        JSONArray choices = json.optJSONArray("choices");
+        if (choices != null && choices.length() > 0) {
+            JSONObject choice = choices.optJSONObject(0);
+            JSONObject message = choice == null ? null : choice.optJSONObject("message");
+            if (message != null) {
+                String content = message.optString("content", "");
+                if (!content.isEmpty()) return content;
+            }
+        }
+
+        // Ollama native: {"message":{"role":"assistant","content":"..."}}
+        JSONObject message = json.optJSONObject("message");
+        if (message != null) {
+            String content = message.optString("content", "");
+            if (!content.isEmpty()) return content;
+        }
+
+        // Some compatible local servers return a direct response field.
+        return json.optString("response", "");
+    }
+
+    private String compact(String value) {
+        if (value == null) return "";
+        String cleaned = value.replaceAll("\\s+", " ").trim();
+        return cleaned.length() > 500 ? cleaned.substring(0, 500) + "…" : cleaned;
     }
 
     private String readAll(InputStream stream) throws Exception {
