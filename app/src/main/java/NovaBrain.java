@@ -2,9 +2,11 @@ package com.aircontrol;
 
 import android.content.Context;
 import android.util.Log;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import java.util.Locale;
 
-/** Central orchestration layer for local actions, memory and bounded autonomous planning. */
+/** Central orchestration layer for local actions, conversation and bounded autonomous planning. */
 public final class NovaBrain {
     private static final String TAG = "NovaBrain";
     private final NovaMemory memory;
@@ -60,13 +62,78 @@ public final class NovaBrain {
         String text = command.trim();
         memory.remember("user", text);
         status("BRAIN • UNDERSTANDING");
+
+        // Deterministic built-in commands always win.
         if (handleLocalCommand(text)) return true;
+
         if (endpoint == null || endpoint.trim().isEmpty()) {
-            reply("I can perform my built-in tablet actions, but my AI core is not configured yet.");
+            reply("My AI core is not configured yet.");
             return false;
         }
+
+        // IMPORTANT: ordinary conversation must not enter the autonomous agent loop.
+        // The planner expects action JSON, so sending a simple question such as
+        // "what's happening?" through it can produce parse/retry failures and the
+        // misleading "could not be completed reliably" message.
+        if (!needsAutonomousAgent(text)) {
+            chatDirectly(text, endpoint, apiKey, model);
+            return true;
+        }
+
         think(text, endpoint, apiKey, model);
         return true;
+    }
+
+    private void chatDirectly(String command, String endpoint, String apiKey, String model) {
+        status("NOVA • THINKING");
+        try {
+            JSONArray messages = new JSONArray();
+            JSONObject system = new JSONObject();
+            system.put("role", "system");
+            system.put("content", "You are NOVA, a helpful voice assistant running on an Android tablet. " +
+                    "Answer naturally and briefly. Do not return JSON. Do not invent actions or claim to control the device. " +
+                    "If the user asks a normal question, simply answer it conversationally.");
+            messages.put(system);
+
+            JSONObject user = new JSONObject();
+            user.put("role", "user");
+            user.put("content", command);
+            messages.put(user);
+
+            ai.chat(endpoint, apiKey, model, messages, new NovaAiClient.Callback() {
+                @Override public void onResult(String text) {
+                    memory.remember("assistant", text);
+                    status("NOVA • READY");
+                    reply(text);
+                }
+
+                @Override public void onError(String message) {
+                    Log.e(TAG, "DIRECT CHAT ERROR: " + message);
+                    status("NOVA • AI ERROR");
+                    reply("I'm having trouble reaching my AI brain right now.");
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "DIRECT CHAT SETUP ERROR", e);
+            reply("I'm having trouble starting my AI brain right now.");
+        }
+    }
+
+    /** Only commands that plausibly require device/tool actions go to the autonomous planner. */
+    private boolean needsAutonomousAgent(String command) {
+        String c = command.toLowerCase(Locale.ROOT).trim();
+        String[] actionStarts = {
+                "open ", "launch ", "start ", "send ", "message ", "text ", "call ",
+                "tap ", "click ", "press ", "type ", "write ", "enter ", "play ",
+                "pause ", "stop ", "turn on", "turn off", "enable ", "disable ",
+                "set ", "change ", "switch ", "navigate ", "search ", "find ",
+                "remind ", "remember to ", "schedule ", "create ", "delete ",
+                "download ", "upload ", "share ", "post ", "reply ", "email "
+        };
+        for (String start : actionStarts) if (c.startsWith(start)) return true;
+        return c.contains(" on whatsapp") || c.contains(" on instagram") ||
+                c.contains(" on youtube") || c.contains(" on chrome") ||
+                c.contains("on my screen") || c.contains("in the app");
     }
 
     private boolean handleLocalCommand(String command) {
