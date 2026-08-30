@@ -38,14 +38,14 @@ public final class NovaAssistant {
         secureStore = new NovaSecureStore(this.context);
 
         String savedEndpoint = prefs.getString(ENDPOINT, "").trim();
-        // Migrate old cloud/compatibility endpoints to the known-working native
-        // Ollama endpoint. This also fixes devices that retained an old endpoint
-        // in SharedPreferences after an app update.
+        // Always migrate previously saved Ollama endpoints to the current LAN
+        // endpoint. The PC's Wi-Fi address can change, leaving the tablet with
+        // a stale 192.168.x.x address and causing the misleading AI-brain error.
         if (savedEndpoint.isEmpty()
                 || savedEndpoint.contains("api.openai.com")
-                || savedEndpoint.contains(":11434/v1/chat/completions")
-                || savedEndpoint.contains("127.0.0.1:11434")
-                || savedEndpoint.contains("localhost:11434")) {
+                || savedEndpoint.contains(":11434")
+                || savedEndpoint.contains("127.0.0.1")
+                || savedEndpoint.contains("localhost")) {
             prefs.edit()
                     .putString(ENDPOINT, LOCAL_ENDPOINT)
                     .putString(MODEL, LOCAL_MODEL)
