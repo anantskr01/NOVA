@@ -38,12 +38,10 @@ public final class NovaAssistant {
         secureStore = new NovaSecureStore(this.context);
 
         String savedEndpoint = prefs.getString(ENDPOINT, "").trim();
-        // Always migrate previously saved Ollama endpoints to the current LAN
-        // endpoint. The PC's Wi-Fi address can change, leaving the tablet with
-        // a stale 192.168.x.x address and causing the misleading AI-brain error.
+        // Keep the development Ollama endpoint consistent with the current LAN setup.
+        // Do not overwrite unrelated/custom endpoints here.
         if (savedEndpoint.isEmpty()
                 || savedEndpoint.contains("api.openai.com")
-                || savedEndpoint.contains(":11434")
                 || savedEndpoint.contains("127.0.0.1")
                 || savedEndpoint.contains("localhost")) {
             prefs.edit()
@@ -82,34 +80,43 @@ public final class NovaAssistant {
         String text = raw.trim();
         if (text.isEmpty()) return;
 
-        // SpeechRecognizer commonly returns punctuation variants such as
-        // "Hey, NOVA". Normalize only for wake-word matching.
+        // SpeechRecognizer commonly returns punctuation/casing variants such as
+        // "Hey, NOVA". Normalize only for wake-word detection, then preserve the
+        // original command text so punctuation and natural phrasing are not lost.
         String normalized = text.toLowerCase(Locale.ROOT)
                 .replaceAll("[^\\p{L}\\p{N}]+", " ")
                 .trim();
-        int wake = normalized.indexOf(WAKE_PHRASE);
 
+        if (normalized.equals("nova")) {
+            say("Yes. I am listening.");
+            return;
+        }
+
+        int wake = normalized.indexOf(WAKE_PHRASE);
         if (wake >= 0) {
             String lowerOriginal = text.toLowerCase(Locale.ROOT);
             int hey = lowerOriginal.indexOf("hey");
+
             if (hey >= 0) {
                 String afterHey = text.substring(hey + 3).trim();
                 afterHey = afterHey.replaceFirst("^[,;:!?\\-]+\\s*", "");
+
                 if (afterHey.toLowerCase(Locale.ROOT).startsWith("nova")) {
                     text = afterHey.substring(4).trim();
                 } else {
-                    text = normalized.substring(WAKE_PHRASE.length()).trim();
+                    // Fallback for an unusual recognizer transcription. Use the
+                    // actual normalized wake-word position instead of assuming it
+                    // starts at character zero.
+                    text = normalized.substring(wake + WAKE_PHRASE.length()).trim();
                 }
             } else {
-                text = normalized.substring(WAKE_PHRASE.length()).trim();
+                text = normalized.substring(wake + WAKE_PHRASE.length()).trim();
             }
+
             if (text.isEmpty()) {
                 say("Yes. I am listening.");
                 return;
             }
-        } else if (normalized.equals("nova")) {
-            say("Yes. I am listening.");
-            return;
         }
 
         handle(text);
