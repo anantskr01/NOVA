@@ -6,10 +6,7 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/**
- * Central NOVA reasoning/orchestration layer.
- * Keeps AI reasoning separate from Android action execution.
- */
+/** Central NOVA reasoning/orchestration layer. Keeps AI reasoning separate from Android execution. */
 public final class NovaBrain {
     private static final String TAG = "NovaBrain";
     private static final String PREFS = "nova_ai_settings";
@@ -31,27 +28,21 @@ public final class NovaBrain {
     private final NovaAgentPlanner planner;
     private boolean thinking;
 
-    public NovaBrain(Context context, Listener listener) {
+    public NovaBrain(Context context, NovaActionEngine actions, Listener listener) {
         this.context = context.getApplicationContext();
         this.listener = listener;
-        memory = new NovaMemory(this.context);
-        secureStore = new NovaSecureStore(this.context);
-
-        actions = new NovaActionEngine(this.context, new NovaActionEngine.Callback() {
-            @Override public void status(String text) { NovaBrain.this.status(text); }
-            @Override public void reply(String text) { NovaBrain.this.reply(text); }
-        });
+        this.actions = actions;
+        this.memory = new NovaMemory(this.context);
+        this.secureStore = new NovaSecureStore(this.context);
 
         planner = new NovaAgentPlanner(new NovaAgentPlanner.ActionExecutor() {
             @Override public boolean execute(String type, String value) {
-                return actions.execute(type, value);
+                return NovaBrain.this.actions != null && NovaBrain.this.actions.execute(type, value);
             }
 
             @Override public String readScreen() {
                 GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-                return service == null
-                        ? "Accessibility service is not connected."
-                        : service.getVisibleTextSummary();
+                return service == null ? "Accessibility service is not connected." : service.getVisibleTextSummary();
             }
 
             @Override public boolean clickText(String text) {
@@ -76,13 +67,11 @@ public final class NovaBrain {
             reply("I'm still working on the previous request.");
             return;
         }
-
         final String command = request.trim();
         if (getEndpoint().isEmpty()) {
             reply("My AI core isn't configured yet.");
             return;
         }
-
         thinking = true;
         memory.remember("user", command);
         status("BRAIN • UNDERSTANDING");
@@ -91,24 +80,18 @@ public final class NovaBrain {
 
     private void askAi(String command) {
         status("BRAIN • AI THINKING");
-
         try {
             JSONArray messages = new JSONArray();
-
             JSONObject system = new JSONObject();
             system.put("role", "system");
             system.put("content",
-                    "You are NOVA, a careful Android tablet agent. " +
-                    "Understand the user's goal and return a safe, bounded plan as JSON only. " +
+                    "You are NOVA, a careful Android tablet agent. Understand the user's goal and return a safe, bounded plan as JSON only. " +
                     "Format: {\"say\":\"short response\",\"actions\":[{\"type\":\"action\",\"value\":\"value\"}]}. " +
-                    "Allowed actions: home, back, recents, notifications, quick_settings, " +
-                    "scroll_up, scroll_down, swipe_left, swipe_right, open_url, open_package, " +
-                    "open_app, click_text, click_index, search, read_screen, settings, none. " +
+                    "Allowed actions: home, back, recents, notifications, quick_settings, scroll_up, scroll_down, swipe_left, swipe_right, " +
+                    "open_url, open_package, open_app, click_text, click_index, search, read_screen, settings, wait, none. " +
                     "Use at most 8 actions. Use read_screen before ambiguous UI interactions. " +
-                    "Never bypass permissions, authentication, security, or private data. " +
-                    "Never claim success unless an action can actually be dispatched. Prefer reversible actions. " +
-                    "Do not invent tools or action types. If the task cannot be completed with the available actions, " +
-                    "explain the limitation in say and return no unsafe actions.");
+                    "Never bypass permissions, authentication, security, or private data. Never claim success unless an action can actually be dispatched. " +
+                    "Prefer reversible actions. Do not invent tools or action types. If the task cannot be completed with available actions, explain the limitation and return no unsafe actions.");
             messages.put(system);
 
             JSONObject contextMessage = new JSONObject();
@@ -124,24 +107,23 @@ public final class NovaBrain {
                 if (item != null) messages.put(item);
             }
 
-            ai.chat(getEndpoint(), secureStore.getApiKey(), getModel(), messages,
-                    new NovaAiClient.Callback() {
-                        @Override public void onResult(String text) {
-                            try {
-                                memory.remember("assistant", text);
-                                status("BRAIN • PLAN RECEIVED");
-                                if (!planner.execute(text)) reply(text);
-                            } finally {
-                                synchronized (NovaBrain.this) { thinking = false; }
-                            }
-                        }
+            ai.chat(getEndpoint(), secureStore.getApiKey(), getModel(), messages, new NovaAiClient.Callback() {
+                @Override public void onResult(String text) {
+                    try {
+                        memory.remember("assistant", text);
+                        status("BRAIN • PLAN RECEIVED");
+                        if (!planner.execute(text)) reply("I received an invalid or unusable plan.");
+                    } finally {
+                        synchronized (NovaBrain.this) { thinking = false; }
+                    }
+                }
 
-                        @Override public void onError(String message) {
-                            synchronized (NovaBrain.this) { thinking = false; }
-                            Log.e(TAG, "AI ERROR: " + message);
-                            reply("My AI core is unavailable right now. " + message);
-                        }
-                    });
+                @Override public void onError(String message) {
+                    synchronized (NovaBrain.this) { thinking = false; }
+                    Log.e(TAG, "AI ERROR: " + message);
+                    reply("My AI core is unavailable right now. " + message);
+                }
+            });
         } catch (Exception e) {
             synchronized (this) { thinking = false; }
             Log.e(TAG, "AI REQUEST PREPARATION ERROR", e);
@@ -150,20 +132,16 @@ public final class NovaBrain {
     }
 
     private String getEndpoint() {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(ENDPOINT, "");
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ENDPOINT, "");
     }
 
     private String getModel() {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(MODEL, "gpt-4o-mini");
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(MODEL, "gpt-4o-mini");
     }
 
     private String getUiSnapshot() {
         GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-        return service == null
-                ? "Accessibility service is not connected."
-                : service.getUiSnapshot();
+        return service == null ? "Accessibility service is not connected." : service.getUiSnapshot();
     }
 
     private void status(String text) {
@@ -178,7 +156,5 @@ public final class NovaBrain {
 
     public synchronized boolean isBusy() { return thinking; }
 
-    public void shutdown() {
-        ai.shutdown();
-    }
+    public void shutdown() { ai.shutdown(); }
 }
