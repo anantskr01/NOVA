@@ -9,17 +9,17 @@ import android.speech.tts.TextToSpeech;
 import android.util.Log;
 
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** NOVA user-facing facade. Built-in skills stay local; open-ended requests go to NovaBrain. */
 public final class NovaAssistant {
     public interface Listener { void onStatus(String text); }
-
     private static final String TAG = "NovaAssistant";
     private static final String PREFS = "nova_ai_settings";
     private static final String ENDPOINT = "endpoint";
     private static final String MODEL = "model";
     private static final String WAKE_PHRASE = "hey nova";
-
     private final Context context;
     private final Listener listener;
     private final SharedPreferences prefs;
@@ -39,22 +39,18 @@ public final class NovaAssistant {
         memory = new NovaMemory(this.context);
         secureStore = new NovaSecureStore(this.context);
         apps = new NovaAppCatalog(this.context);
-
         actions = new NovaActionEngine(this.context, new NovaActionEngine.Callback() {
             @Override public void status(String text) { NovaAssistant.this.status(text); }
             @Override public void reply(String text) { NovaAssistant.this.say(text); }
         });
-
         brain = new NovaBrain(this.context, actions, new NovaBrain.Listener() {
             @Override public void onStatus(String text) { NovaAssistant.this.status(text); }
             @Override public void onReply(String text) { NovaAssistant.this.say(text); }
         });
-
         skills = new NovaSkillRegistry(this.context, new NovaSkillRegistry.Callback() {
             @Override public void reply(String text) { NovaAssistant.this.say(text); }
             @Override public void status(String text) { NovaAssistant.this.status(text); }
         });
-
         tts = new TextToSpeech(this.context, result -> {
             if (result == TextToSpeech.SUCCESS) {
                 try { tts.setLanguage(Locale.getDefault()); } catch (Exception ignored) { }
@@ -63,14 +59,11 @@ public final class NovaAssistant {
     }
 
     public void saveAiSettings(String endpoint, String apiKey, String model) {
-        prefs.edit()
-                .putString(ENDPOINT, endpoint == null ? "" : endpoint.trim())
-                .putString(MODEL, model == null || model.trim().isEmpty() ? "gpt-4o-mini" : model.trim())
-                .apply();
+        prefs.edit().putString(ENDPOINT, endpoint == null ? "" : endpoint.trim())
+                .putString(MODEL, model == null || model.trim().isEmpty() ? "gpt-4o-mini" : model.trim()).apply();
         secureStore.putApiKey(apiKey == null ? "" : apiKey.trim());
         status("AI CORE CONFIGURED • KEY PROTECTED");
     }
-
     public String getEndpoint() { return prefs.getString(ENDPOINT, ""); }
     public String getModel() { return prefs.getString(MODEL, "gpt-4o-mini"); }
     public boolean hasAiCore() { return !getEndpoint().isEmpty(); }
@@ -83,10 +76,7 @@ public final class NovaAssistant {
         if (wake >= 0) {
             text = text.substring(wake + WAKE_PHRASE.length()).trim();
             if (text.isEmpty()) { say("Yes. I am listening."); return; }
-        } else if (lower.equals("nova")) {
-            say("Yes. I am listening.");
-            return;
-        }
+        } else if (lower.equals("nova")) { say("Yes. I am listening."); return; }
         handle(text);
     }
 
@@ -96,15 +86,10 @@ public final class NovaAssistant {
         if (command.isEmpty()) return;
         String c = command.toLowerCase(Locale.ROOT);
         status("PROCESSING • " + command);
-
         try {
             if (skills.handle(command)) return;
             if (handleMemory(c, command)) return;
-            if (containsAny(c, "stop nova", "stop listening", "be quiet", "stop speaking")) {
-                if (tts != null) tts.stop();
-                say("Okay.");
-                return;
-            }
+            if (containsAny(c, "stop nova", "stop listening", "be quiet", "stop speaking")) { if (tts != null) tts.stop(); say("Okay."); return; }
             if (containsAny(c, "go home", "home screen", "take me home")) { actions.execute("home", ""); say("Going home."); return; }
             if (containsAny(c, "go back", "back")) { actions.execute("back", ""); say("Going back."); return; }
             if (containsAny(c, "recent apps", "open recents", "show recents")) { actions.execute("recents", ""); say("Opening recent apps."); return; }
@@ -125,20 +110,16 @@ public final class NovaAssistant {
                 String q = command.replaceFirst("(?i)^(search for|search|google)\\s+", "").trim();
                 if (!q.isEmpty()) { search(q); return; }
             }
-            java.util.regex.Matcher numbered = java.util.regexPattern.compile("(?i)(?:tap|click|open)\\s+(?:the\\s+)?(\\d+)(?:st|nd|rd|th)?(?:\\s+(?:result|item|option))?").matcher(command);
+            Matcher numbered = Pattern.compile("(?i)(?:tap|click|open)\\s+(?:the\\s+)?(\\d+)(?:st|nd|rd|th)?(?:\\s+(?:result|item|option))?").matcher(command);
             if (numbered.matches()) {
                 GestureAccessibilityService service = GestureAccessibilityService.getInstance();
                 int index = Integer.parseInt(numbered.group(1));
                 boolean ok = service != null && service.clickVisibleIndex(index);
-                say(ok ? "Done." : "I couldn't activate that visible item.");
-                return;
+                say(ok ? "Done." : "I couldn't activate that visible item."); return;
             }
             if (c.startsWith("open ")) { openByName(command.substring(5).trim()); return; }
             if (c.startsWith("do ") && c.contains(" then ")) { runSequence(command.substring(3)); return; }
-            if (!hasAiCore()) {
-                say("I can do built-in tablet tasks now. Configure an OpenAI-compatible AI endpoint for open-ended reasoning and multi-step planning.");
-                return;
-            }
+            if (!hasAiCore()) { say("I can do built-in tablet tasks now. Configure an OpenAI-compatible AI endpoint for open-ended reasoning and multi-step planning."); return; }
             brain.think(command);
         } catch (Exception e) {
             Log.e(TAG, "COMMAND ERROR", e);
@@ -148,31 +129,18 @@ public final class NovaAssistant {
 
     private boolean handleMemory(String c, String original) {
         if (c.equals("forget everything") || c.equals("clear memory") || c.equals("delete my memory")) {
-            memory.clear();
-            context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().clear().apply();
-            say("Local NOVA memory has been cleared.");
-            return true;
+            memory.clear(); context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().clear().apply(); say("Local NOVA memory has been cleared."); return true;
         }
         if (c.startsWith("remember ")) {
             String note = original.substring(9).trim();
             if (!note.isEmpty()) {
                 int as = note.toLowerCase(Locale.ROOT).indexOf(" as ");
-                if (as > 0 && as + 4 < note.length()) {
-                    String value = note.substring(0, as).trim();
-                    String key = note.substring(as + 4).trim();
-                    memory.rememberFact(key, value);
-                    say("I'll remember that locally on this tablet.");
-                } else {
-                    memory.rememberFact("note", note);
-                    say("I'll remember that locally on this tablet.");
-                }
-                return true;
+                if (as > 0 && as + 4 < note.length()) memory.rememberFact(note.substring(as + 4).trim(), note.substring(0, as).trim());
+                else memory.rememberFact("note", note);
+                say("I'll remember that locally on this tablet."); return true;
             }
         }
-        if (containsAny(c, "what do you remember", "what do you know about me")) {
-            say(memory.factsSummary());
-            return true;
-        }
+        if (containsAny(c, "what do you remember", "what do you know about me")) { say(memory.factsSummary()); return true; }
         return false;
     }
 
@@ -181,60 +149,26 @@ public final class NovaAssistant {
         status("MULTI-ACTION PLAN • " + steps.length + " STEPS");
         for (String step : steps) if (!step.trim().isEmpty()) handle(step.trim());
     }
-
     private void openByName(String name) {
         if (name.isEmpty()) return;
-        String lower = name.toLowerCase(Locale.ROOT);
-        if (lower.contains("youtube")) { actions.execute("open_app", "YouTube"); return; }
+        if (name.toLowerCase(Locale.ROOT).contains("youtube")) { actions.execute("open_app", "YouTube"); return; }
         android.content.pm.ResolveInfo info = apps.resolve(name);
         Intent launchIntent = apps.launchIntent(info);
-        if (launchIntent != null) {
-            launch(launchIntent);
-            say("Opening " + info.loadLabel(context.getPackageManager()) + ".");
-            return;
-        }
+        if (launchIntent != null) { launch(launchIntent); say("Opening " + info.loadLabel(context.getPackageManager()) + "."); return; }
         say("I couldn't find an installed app called " + name + ".");
     }
-
     private void search(String query) {
         status("WEB RESEARCH • " + query);
         web.search(query, new NovaWebTool.Callback() {
             @Override public void onResult(String text) { say(text); }
-            @Override public void onError(String error) {
-                launch(new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query))));
-                say("I opened the search results.");
-            }
+            @Override public void onError(String error) { launch(new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query)))); say("I opened the search results."); }
         });
     }
-
-    private String getUiSnapshot() {
-        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-        return service == null ? "Accessibility access is not connected." : service.getUiSnapshot();
-    }
-
-    private String readScreen() {
-        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-        return service == null ? "Accessibility access is not connected, so I cannot inspect the current screen." : service.getVisibleTextSummary();
-    }
-
+    private String getUiSnapshot() { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service == null ? "Accessibility access is not connected." : service.getUiSnapshot(); }
+    private String readScreen() { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service == null ? "Accessibility access is not connected, so I cannot inspect the current screen." : service.getVisibleTextSummary(); }
     private void launch(Intent intent) { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(intent); }
-
-    private boolean containsAny(String value, String... options) {
-        for (String option : options) if (value.equals(option) || value.contains(option)) return true;
-        return false;
-    }
-
+    private boolean containsAny(String value, String... options) { for (String option : options) if (value.equals(option) || value.contains(option)) return true; return false; }
     private void status(String text) { if (listener != null && text != null) listener.onStatus(text); }
-
-    private void say(String text) {
-        if (text == null || text.trim().isEmpty()) return;
-        status(text);
-        if (tts != null) try { tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NOVA"); } catch (Exception ignored) { }
-    }
-
-    public void destroy() {
-        if (tts != null) { try { tts.stop(); tts.shutdown(); } catch (Exception ignored) { } tts = null; }
-        brain.shutdown();
-        web.shutdown();
-    }
+    private void say(String text) { if (text == null || text.trim().isEmpty()) return; status(text); if (tts != null) try { tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NOVA"); } catch (Exception ignored) { } }
+    public void destroy() { if (tts != null) { try { tts.stop(); tts.shutdown(); } catch (Exception ignored) { } tts = null; } brain.shutdown(); web.shutdown(); }
 }
