@@ -100,15 +100,11 @@ public final class NovaAiClient {
 
     private String normalizeEndpoint(String endpoint) {
         if (endpoint == null) return "";
-        String value = endpoint.trim();
+        String value = endpoint.trim().replaceFirst("/+$", "");
         if (value.isEmpty()) return "";
-        // Accept either a full /api/chat URL or an Ollama base URL.
-        if (!value.endsWith("/api/chat") && (value.endsWith("/api") || value.endsWith("/"))) {
-            value = value.replaceFirst("/+$", "") + "/chat";
-        }
-        if (!value.contains("/api/chat") && !value.matches("^https?://[^/]+$")) return value;
-        if (value.matches("^https?://[^/]+$")) value = value + "/api/chat";
-        return value;
+        if (value.endsWith("/api/chat")) return value;
+        if (value.endsWith("/api")) return value + "/chat";
+        return value + "/api/chat";
     }
 
     private String extractText(JSONObject json) {
