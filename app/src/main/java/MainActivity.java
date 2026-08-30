@@ -8,7 +8,6 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.content.SharedPreferences;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
@@ -21,7 +20,6 @@ import java.util.ArrayList;
 import java.util.Locale;
 
 public final class MainActivity extends Activity implements NovaAssistant.Listener {
-    private static final int CAMERA_PERMISSION_CODE = 100;
     private static final int AUDIO_PERMISSION_CODE = 101;
     private static final int NOTIFICATION_PERMISSION_CODE = 102;
     private static final String PREFS = "nova_voice_prefs";
@@ -85,7 +83,13 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
             assistantStatusText.setText("VOICE • ALWAYS LISTENING");
         }
         requestNotificationPermission();
-        checkCameraPermission();
+
+        // Do NOT start the camera/gesture service automatically. It can generate
+        // accessibility gestures while the user is simply trying to talk to NOVA.
+        // Vision will be enabled separately once the voice core is stable.
+        statusText.setText("NOVA • VOICE CORE READY");
+        handStatusText.setText("VISION • STANDBY");
+        hudView.setState("ONLINE");
     }
 
     private void executeTypedCommand() {
@@ -93,42 +97,6 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
         if (command.isEmpty()) return;
         nova.handle(command);
         commandInput.setText("");
-    }
-
-    private void checkCameraPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            statusText.setText("NOVA • CAMERA PERMISSION REQUIRED");
-            handStatusText.setText("VISION • WAITING FOR PERMISSION");
-            hudView.setState("WAITING");
-            requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_CODE);
-            return;
-        }
-        requestAudioThenStart();
-    }
-
-    private void requestAudioThenStart() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, AUDIO_PERMISSION_CODE);
-            return;
-        }
-        startCameraGestureService();
-    }
-
-    private void startCameraGestureService() {
-        Intent intent = new Intent(this, CameraGestureService.class);
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
-            else startService(intent);
-            statusText.setText("NOVA • CORE ONLINE");
-            handStatusText.setText("VISION • FINGER CONTROL ACTIVE");
-            hudView.setState("ONLINE");
-        } catch (Exception e) {
-            statusText.setText("NOVA • SERVICE ERROR");
-            handStatusText.setText("VISION • UNAVAILABLE");
-            hudView.setState("ERROR");
-        }
     }
 
     private void requestNotificationPermission() {
@@ -164,7 +132,7 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
                 handsFreeButton.setText("STOP HANDS-FREE");
                 assistantStatusText.setText("VOICE • ALWAYS LISTENING");
                 hudView.setState("LISTENING");
-                Toast.makeText(this, "NOVA will keep listening in the background", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "NOVA hands-free started", Toast.LENGTH_SHORT).show();
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
                     try {
                         Intent overlay = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -258,22 +226,14 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == CAMERA_PERMISSION_CODE) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) requestAudioThenStart();
-            else {
-                statusText.setText("NOVA • CAMERA DENIED");
-                handStatusText.setText("VISION • DISABLED");
-                hudView.setState("LOCKED");
-            }
-        } else if (requestCode == NOTIFICATION_PERMISSION_CODE) {
-            assistantStatusText.setText("ASSISTANT • NOTIFICATION PERMISSION UPDATED");
+        if (requestCode == NOTIFICATION_PERMISSION_CODE) {
+            assistantStatusText.setText("NOVA • VOICE READY");
         } else if (requestCode == AUDIO_PERMISSION_CODE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 assistantStatusText.setText("VOICE • READY");
             } else {
-                assistantStatusText.setText("VOICE • TEXT COMMANDS STILL AVAILABLE");
+                assistantStatusText.setText("VOICE • TEXT COMMANDS AVAILABLE");
             }
-            startCameraGestureService();
         }
     }
 
