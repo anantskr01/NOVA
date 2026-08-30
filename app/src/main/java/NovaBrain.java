@@ -1,7 +1,6 @@
 package com.aircontrol;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -30,6 +29,7 @@ public final class NovaBrain {
     private final NovaAiClient ai = new NovaAiClient();
     private final NovaActionEngine actions;
     private final NovaAgentPlanner planner;
+    private boolean thinking;
 
     public NovaBrain(Context context, Listener listener) {
         this.context = context.getApplicationContext();
@@ -38,8 +38,8 @@ public final class NovaBrain {
         secureStore = new NovaSecureStore(this.context);
 
         actions = new NovaActionEngine(this.context, new NovaActionEngine.Callback() {
-            @Override public void status(String text) { status(text); }
-            @Override public void reply(String text) { reply(text); }
+            @Override public void status(String text) { NovaBrain.this.status(text); }
+            @Override public void reply(String text) { NovaBrain.this.reply(text); }
         });
 
         planner = new NovaAgentPlanner(new NovaAgentPlanner.ActionExecutor() {
@@ -70,18 +70,22 @@ public final class NovaBrain {
     }
 
     /** Main entry point for open-ended NOVA requests. */
-    public void think(String request) {
+    public synchronized void think(String request) {
         if (request == null || request.trim().isEmpty()) return;
+        if (thinking) {
+            reply("I'm still working on the previous request.");
+            return;
+        }
 
-        String command = request.trim();
-        memory.remember("user", command);
-        status("BRAIN • UNDERSTANDING");
-
+        final String command = request.trim();
         if (getEndpoint().isEmpty()) {
             reply("My AI core isn't configured yet.");
             return;
         }
 
+        thinking = true;
+        memory.remember("user", command);
+        status("BRAIN • UNDERSTANDING");
         askAi(command);
     }
 
@@ -99,10 +103,12 @@ public final class NovaBrain {
                     "Format: {\"say\":\"short response\",\"actions\":[{\"type\":\"action\",\"value\":\"value\"}]}. " +
                     "Allowed actions: home, back, recents, notifications, quick_settings, " +
                     "scroll_up, scroll_down, swipe_left, swipe_right, open_url, open_package, " +
-                    "open_app, click_text, click_index, search, read_screen, settings, wait, none. " +
+                    "open_app, click_text, click_index, search, read_screen, settings, none. " +
                     "Use at most 8 actions. Use read_screen before ambiguous UI interactions. " +
                     "Never bypass permissions, authentication, security, or private data. " +
-                    "Never claim success unless an action can actually be dispatched. Prefer reversible actions.");
+                    "Never claim success unless an action can actually be dispatched. Prefer reversible actions. " +
+                    "Do not invent tools or action types. If the task cannot be completed with the available actions, " +
+                    "explain the limitation in say and return no unsafe actions.");
             messages.put(system);
 
             JSONObject contextMessage = new JSONObject();
@@ -114,30 +120,30 @@ public final class NovaBrain {
             JSONArray history = memory.recent();
             int start = Math.max(0, history.length() - MAX_HISTORY);
             for (int i = start; i < history.length(); i++) {
-                messages.put(history.getJSONObject(i));
+                JSONObject item = history.optJSONObject(i);
+                if (item != null) messages.put(item);
             }
-
-            JSONObject user = new JSONObject();
-            user.put("role", "user");
-            user.put("content", command);
-            messages.put(user);
 
             ai.chat(getEndpoint(), secureStore.getApiKey(), getModel(), messages,
                     new NovaAiClient.Callback() {
                         @Override public void onResult(String text) {
-                            memory.remember("assistant", text);
-                            status("BRAIN • PLAN RECEIVED");
-                            if (!planner.execute(text)) {
-                                reply(text);
+                            try {
+                                memory.remember("assistant", text);
+                                status("BRAIN • PLAN RECEIVED");
+                                if (!planner.execute(text)) reply(text);
+                            } finally {
+                                synchronized (NovaBrain.this) { thinking = false; }
                             }
                         }
 
                         @Override public void onError(String message) {
+                            synchronized (NovaBrain.this) { thinking = false; }
                             Log.e(TAG, "AI ERROR: " + message);
                             reply("My AI core is unavailable right now. " + message);
                         }
                     });
         } catch (Exception e) {
+            synchronized (this) { thinking = false; }
             Log.e(TAG, "AI REQUEST PREPARATION ERROR", e);
             reply("I couldn't prepare the AI request.");
         }
@@ -169,6 +175,8 @@ public final class NovaBrain {
         memory.remember("assistant", text);
         if (listener != null) listener.onReply(text);
     }
+
+    public synchronized boolean isBusy() { return thinking; }
 
     public void shutdown() {
         ai.shutdown();
