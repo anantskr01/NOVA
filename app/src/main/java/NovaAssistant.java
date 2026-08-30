@@ -1,6 +1,5 @@
 package com.aircontrol;
 
-import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -9,14 +8,9 @@ import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
 import android.util.Log;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.Locale;
 
-/** NOVA orchestration layer: local skills first, then the optional AI planner. */
+/** NOVA user-facing orchestration facade. Built-in skills stay local; open-ended requests go to NovaBrain. */
 public final class NovaAssistant {
     public interface Listener { void onStatus(String text); }
 
@@ -31,12 +25,11 @@ public final class NovaAssistant {
     private final SharedPreferences prefs;
     private final NovaMemory memory;
     private final NovaSecureStore secureStore;
-    private final NovaAiClient ai = new NovaAiClient();
     private final NovaWebTool web = new NovaWebTool();
     private final NovaSkillRegistry skills;
     private final NovaAppCatalog apps;
     private final NovaActionEngine actions;
-    private final NovaAgentPlanner agent;
+    private final NovaBrain brain;
     private TextToSpeech tts;
 
     public NovaAssistant(Context context, Listener listener) {
@@ -46,26 +39,22 @@ public final class NovaAssistant {
         memory = new NovaMemory(this.context);
         secureStore = new NovaSecureStore(this.context);
         apps = new NovaAppCatalog(this.context);
+
         actions = new NovaActionEngine(this.context, new NovaActionEngine.Callback() {
-            @Override public void status(String text) { status(text); }
-            @Override public void reply(String text) { say(text); }
+            @Override public void status(String text) { NovaAssistant.this.status(text); }
+            @Override public void reply(String text) { NovaAssistant.this.say(text); }
         });
-        agent = new NovaAgentPlanner(new NovaAgentPlanner.ActionExecutor() {
-            @Override public boolean execute(String type, String value) { return actions.execute(type, value); }
-            @Override public String readScreen() { return NovaAssistant.this.readScreen(); }
-            @Override public boolean clickText(String text) { return NovaAssistant.this.clickText(text); }
-            @Override public boolean clickVisibleIndex(int index) {
-                GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-                return service != null && service.clickVisibleIndex(index);
-            }
-        }, new NovaAgentPlanner.Listener() {
-            @Override public void status(String text) { status(text); }
-            @Override public void reply(String text) { say(text); }
+
+        brain = new NovaBrain(this.context, new NovaBrain.Listener() {
+            @Override public void onStatus(String text) { NovaAssistant.this.status(text); }
+            @Override public void onReply(String text) { NovaAssistant.this.say(text); }
         });
+
         skills = new NovaSkillRegistry(this.context, new NovaSkillRegistry.Callback() {
-            @Override public void reply(String text) { say(text); }
-            @Override public void status(String text) { status(text); }
+            @Override public void reply(String text) { NovaAssistant.this.say(text); }
+            @Override public void status(String text) { NovaAssistant.this.status(text); }
         });
+
         tts = new TextToSpeech(this.context, result -> {
             if (result == TextToSpeech.SUCCESS) {
                 try { tts.setLanguage(Locale.getDefault()); } catch (Exception ignored) { }
@@ -105,7 +94,6 @@ public final class NovaAssistant {
         if (raw == null) return;
         String command = raw.trim();
         if (command.isEmpty()) return;
-        memory.remember("user", command);
         String c = command.toLowerCase(Locale.ROOT);
         status("PROCESSING • " + command);
 
@@ -130,14 +118,16 @@ public final class NovaAssistant {
             if (containsAny(c, "read screen", "what is on screen", "describe screen", "what can you see")) { say(readScreen()); return; }
             if (containsAny(c, "show ui snapshot", "inspect screen", "understand screen")) { say(getUiSnapshot()); return; }
             if (containsAny(c, "recent notifications", "read notifications", "what notifications do i have")) { say(NovaNotificationListenerService.snapshot()); return; }
-            if (containsAny(c, "open settings", "settings")) { actions.execute("settings", ""); say("Opening settings."); return; }
             if (containsAny(c, "open accessibility settings", "accessibility settings")) { launch(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); say("Opening accessibility settings."); return; }
             if (containsAny(c, "open notification access", "notification access")) { launch(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")); say("Opening notification access."); return; }
+            if (containsAny(c, "open settings", "settings")) { actions.execute("settings", ""); say("Opening settings."); return; }
             if (containsAny(c, "list apps", "show my apps", "what apps do i have")) { say(apps.launchableSummary(35)); return; }
+
             if (c.startsWith("search for ") || c.startsWith("search ") || c.startsWith("google ")) {
                 String q = command.replaceFirst("(?i)^(search for|search|google)\\s+", "").trim();
                 if (!q.isEmpty()) { search(q); return; }
             }
+
             java.util.regex.Matcher numbered = java.util.regex.Pattern.compile("(?i)(?:tap|click|open)\\s+(?:the\\s+)?(\\d+)(?:st|nd|rd|th)?(?:\\s+(?:result|item|option))?").matcher(command);
             if (numbered.matches()) {
                 GestureAccessibilityService service = GestureAccessibilityService.getInstance();
@@ -146,6 +136,7 @@ public final class NovaAssistant {
                 say(ok ? "Done." : "I couldn't activate that visible item.");
                 return;
             }
+
             if (c.startsWith("open ")) { openByName(command.substring(5).trim()); return; }
             if (c.startsWith("do ") && c.contains(" then ")) { runSequence(command.substring(3)); return; }
 
@@ -153,7 +144,8 @@ public final class NovaAssistant {
                 say("I can do built-in tablet tasks now. Configure an OpenAI-compatible AI endpoint for open-ended reasoning and multi-step planning.");
                 return;
             }
-            askAi(command);
+
+            brain.think(command);
         } catch (Exception e) {
             Log.e(TAG, "COMMAND ERROR", e);
             say("I couldn't complete that action. Check that the required Android permission is enabled.");
@@ -198,9 +190,7 @@ public final class NovaAssistant {
     private void runSequence(String sequence) {
         String[] steps = sequence.split("(?i)\\s+then\\s+");
         status("MULTI-ACTION PLAN • " + steps.length + " STEPS");
-        for (String step : steps) {
-            if (!step.trim().isEmpty()) handle(step.trim());
-        }
+        for (String step : steps) if (!step.trim().isEmpty()) handle(step.trim());
     }
 
     private void openByName(String name) {
@@ -231,81 +221,6 @@ public final class NovaAssistant {
         });
     }
 
-    private void askAi(String command) {
-        status("AI CORE • PLANNING");
-        JSONArray messages = new JSONArray();
-        try {
-            JSONObject system = new JSONObject();
-            system.put("role", "system");
-            system.put("content",
-                    "You are NOVA, a careful Android tablet agent. Plan the user's goal as a bounded sequence of concrete actions. " +
-                    "Return JSON only: {\"say\":\"short response\",\"actions\":[{\"type\":\"home|back|recents|notifications|quick_settings|scroll_up|scroll_down|swipe_left|swipe_right|open_url|open_package|open_app|click_text|click_index|search|read_screen|settings|none\",\"value\":\"optional value\"}]}. " +
-                    "Use at most 8 actions. Use open_app with a human app name. Use click_text only for visible UI text. Use click_index only after read_screen when the user explicitly refers to a numbered visible result. " +
-                    "For UI tasks, prefer read_screen before click_text when the target is ambiguous. Never bypass permissions, security, authentication, or private app data. " +
-                    "Never claim an action succeeded unless NOVA can dispatch it. Prefer reversible actions. " +
-                    "If the task is impossible with available Android APIs, explain the limitation in say and return no risky actions.");
-            messages.put(system);
-
-            JSONObject contextMessage = new JSONObject();
-            contextMessage.put("role", "system");
-            contextMessage.put("content", "Saved NOVA memory:\n" + memory.factsSummary() +
-                    "\n\nCurrent accessibility UI snapshot:\n" + getUiSnapshot());
-            messages.put(contextMessage);
-
-            JSONArray history = memory.recent();
-            for (int i = 0; i < history.length(); i++) messages.put(history.getJSONObject(i));
-            ai.chat(getEndpoint(), secureStore.getApiKey(), getModel(), messages, new NovaAiClient.Callback() {
-                @Override public void onResult(String text) {
-                    memory.remember("assistant", text);
-                    if (!agent.execute(text)) say(text);
-                }
-                @Override public void onError(String message) {
-                    say("My AI core is unavailable right now. " + message);
-                }
-            });
-        } catch (Exception e) {
-            Log.e(TAG, "AI REQUEST PREP ERROR", e);
-            say("AI request could not be prepared.");
-        }
-    }
-
-    private boolean executeAiPlan(String raw) {
-        try {
-            String jsonText = raw.trim();
-            if (jsonText.startsWith("```")) {
-                jsonText = jsonText.replaceFirst("^```(?:json)?\\s*", "").replaceFirst("\\s*```$", "").trim();
-            }
-            JSONObject plan = new JSONObject(jsonText);
-            String response = plan.optString("say", "");
-            if (!response.isEmpty()) status(response);
-            JSONArray actionsArray = plan.optJSONArray("actions");
-            if (actionsArray != null) {
-                int count = Math.min(actionsArray.length(), 8);
-                for (int i = 0; i < count; i++) {
-                    JSONObject action = actionsArray.optJSONObject(i);
-                    if (action == null) continue;
-                    String type = action.optString("type", "none");
-                    String value = action.optString("value", "");
-                    if ("read_screen".equals(type)) {
-                        status(readScreen());
-                        continue;
-                    }
-                    if ("click_text".equals(type)) {
-                        boolean ok = clickText(value);
-                        status(ok ? "UI ACTION • COMPLETED" : "UI ACTION • NOT FOUND");
-                        continue;
-                    }
-                    boolean ok = actions.execute(type, value);
-                    if (!ok && !"none".equals(type)) status("ACTION BLOCKED • CHECK PERMISSIONS");
-                }
-            }
-            if (!response.isEmpty()) say(response);
-            return true;
-        } catch (Exception ignored) {
-            return false;
-        }
-    }
-
     private String getUiSnapshot() {
         GestureAccessibilityService service = GestureAccessibilityService.getInstance();
         if (service == null) return "Accessibility access is not connected.";
@@ -316,11 +231,6 @@ public final class NovaAssistant {
         GestureAccessibilityService service = GestureAccessibilityService.getInstance();
         if (service == null) return "Accessibility access is not connected, so I cannot inspect the current screen.";
         return service.getVisibleTextSummary();
-    }
-
-    private boolean clickText(String text) {
-        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-        return service != null && service.clickText(text);
     }
 
     private void launch(Intent intent) {
@@ -334,7 +244,7 @@ public final class NovaAssistant {
     }
 
     private void status(String text) {
-        if (listener != null) listener.onStatus(text);
+        if (listener != null && text != null) listener.onStatus(text);
     }
 
     private void say(String text) {
@@ -347,7 +257,7 @@ public final class NovaAssistant {
 
     public void destroy() {
         if (tts != null) { try { tts.stop(); tts.shutdown(); } catch (Exception ignored) { } tts = null; }
-        ai.shutdown();
+        brain.shutdown();
         web.shutdown();
     }
 }
