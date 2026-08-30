@@ -9,6 +9,7 @@ import java.util.Locale;
 /** Central orchestration layer for local actions, conversation and bounded autonomous planning. */
 public final class NovaBrain {
     private static final String TAG = "NovaBrain";
+    private static final String CHAT_SYSTEM = "You are NOVA, a helpful Android voice assistant. Answer naturally, clearly and briefly. Never output JSON in normal conversation. Never claim an action was performed unless it was actually performed. If the user asks for a device action, use the action system rather than pretending.";
     private final NovaMemory memory;
     private final NovaActionEngine actions;
     private final NovaAgentPlanner planner;
@@ -63,7 +64,7 @@ public final class NovaBrain {
         memory.remember("user", text);
         status("BRAIN • UNDERSTANDING");
 
-        // Deterministic built-in commands always win.
+        // Fast, deterministic commands are handled locally and never waste an AI request.
         if (handleLocalCommand(text)) return true;
 
         if (endpoint == null || endpoint.trim().isEmpty()) {
@@ -71,10 +72,8 @@ public final class NovaBrain {
             return false;
         }
 
-        // IMPORTANT: ordinary conversation must not enter the autonomous agent loop.
-        // The planner expects action JSON, so sending a simple question such as
-        // "what's happening?" through it can produce parse/retry failures and the
-        // misleading "could not be completed reliably" message.
+        // Normal conversation is deliberately kept out of the autonomous planner.
+        // This prevents simple questions from becoming fragile action-JSON tasks.
         if (!needsAutonomousAgent(text)) {
             chatDirectly(text, endpoint, apiKey, model);
             return true;
@@ -90,10 +89,18 @@ public final class NovaBrain {
             JSONArray messages = new JSONArray();
             JSONObject system = new JSONObject();
             system.put("role", "system");
-            system.put("content", "You are NOVA, a helpful voice assistant running on an Android tablet. " +
-                    "Answer naturally and briefly. Do not return JSON. Do not invent actions or claim to control the device. " +
-                    "If the user asks a normal question, simply answer it conversationally.");
+            system.put("content", CHAT_SYSTEM);
             messages.put(system);
+
+            // Include a small amount of recent conversational context so NOVA feels
+            // like an assistant rather than a stateless question-answer endpoint.
+            String facts = memory.factsSummary();
+            if (facts != null && !facts.trim().isEmpty()) {
+                JSONObject memoryMessage = new JSONObject();
+                memoryMessage.put("role", "system");
+                memoryMessage.put("content", "Useful saved local memory:\n" + facts);
+                messages.put(memoryMessage);
+            }
 
             JSONObject user = new JSONObject();
             user.put("role", "user");
@@ -106,7 +113,6 @@ public final class NovaBrain {
                     status("NOVA • READY");
                     reply(text);
                 }
-
                 @Override public void onError(String message) {
                     Log.e(TAG, "DIRECT CHAT ERROR: " + message);
                     status("NOVA • AI ERROR");
@@ -119,7 +125,6 @@ public final class NovaBrain {
         }
     }
 
-    /** Only commands that plausibly require device/tool actions go to the autonomous planner. */
     private boolean needsAutonomousAgent(String command) {
         String c = command.toLowerCase(Locale.ROOT).trim();
         String[] actionStarts = {
@@ -192,17 +197,20 @@ public final class NovaBrain {
             return snapshot;
         } catch (Exception e) { Log.e(TAG, "SCREEN READ ERROR", e); return "Unable to read current screen."; }
     }
+
     private boolean clickVisibleText(String text) {
         try {
             GestureAccessibilityService service = GestureAccessibilityService.getInstance();
             return service != null && service.clickText(text);
         } catch (Exception e) { Log.e(TAG, "CLICK ERROR", e); return false; }
     }
+
     private boolean containsAny(String value, String... options) {
         if (value == null) return false;
         for (String option : options) if (value.equals(option) || value.contains(option)) return true;
         return false;
     }
+
     private void status(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.status(text); }
     private void reply(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.reply(text); }
     public void destroy() { try { agentLoop.stop(); } catch (Exception ignored) {} try { ai.shutdown(); } catch (Exception e) { Log.e(TAG, "AI SHUTDOWN ERROR", e); } }
