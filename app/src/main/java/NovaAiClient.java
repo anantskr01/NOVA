@@ -17,71 +17,101 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Local/OpenAI-compatible AI client. No API key is bundled in the APK. */
+/** Local/OpenAI-compatible AI client with bounded retry and robust response parsing. */
 public final class NovaAiClient {
     public interface Callback { void onResult(String text); void onError(String message); }
 
     private static final String TAG = "NovaAI";
+    private static final int MAX_ATTEMPTS = 3;
+    private static final int CONNECT_TIMEOUT_MS = 10000;
+    private static final int READ_TIMEOUT_MS = 90000;
+
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
 
     public void chat(String endpoint, String apiKey, String model, JSONArray messages, Callback callback) {
         executor.execute(() -> {
-            HttpURLConnection connection = null;
-            try {
-                String urlText = endpoint == null ? "" : endpoint.trim();
-                if (urlText.isEmpty()) throw new IllegalArgumentException("AI endpoint is not configured");
-                URL url = new URL(urlText);
-                connection = (HttpURLConnection) url.openConnection();
-                connection.setRequestMethod("POST");
-                connection.setConnectTimeout(8000);
-                connection.setReadTimeout(45000);
-                connection.setDoOutput(true);
-                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                connection.setRequestProperty("Accept", "application/json");
-                if (apiKey != null && !apiKey.trim().isEmpty()) {
-                    connection.setRequestProperty("Authorization", "Bearer " + apiKey.trim());
+            String lastError = "AI request failed";
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+                try {
+                    String urlText = normalizeEndpoint(endpoint);
+                    if (urlText.isEmpty()) throw new IllegalArgumentException("AI endpoint is not configured");
+
+                    URL url = new URL(urlText);
+                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                    try {
+                        connection.setRequestMethod("POST");
+                        connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+                        connection.setReadTimeout(READ_TIMEOUT_MS);
+                        connection.setDoOutput(true);
+                        connection.setUseCaches(false);
+                        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                        connection.setRequestProperty("Accept", "application/json");
+                        if (apiKey != null && !apiKey.trim().isEmpty()) {
+                            connection.setRequestProperty("Authorization", "Bearer " + apiKey.trim());
+                        }
+
+                        JSONObject body = new JSONObject();
+                        String cleanModel = model == null || model.trim().isEmpty() ? "qwen2.5:1.5b" : model.trim();
+                        body.put("model", cleanModel);
+                        body.put("messages", messages);
+                        body.put("temperature", 0.2);
+                        body.put("stream", false);
+
+                        byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+                        connection.setFixedLengthStreamingMode(bytes.length);
+                        try (java.io.OutputStream out = connection.getOutputStream()) { out.write(bytes); }
+
+                        int code = connection.getResponseCode();
+                        InputStream stream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
+                        String response = readAll(stream);
+                        if (code < 200 || code >= 300) {
+                            throw new IllegalStateException("AI HTTP " + code + ": " + compact(response));
+                        }
+
+                        JSONObject json = new JSONObject(response);
+                        String text = extractText(json);
+                        if (text.trim().isEmpty()) throw new IllegalStateException("AI returned no text: " + compact(response));
+                        String finalText = text.trim();
+                        main.post(() -> callback.onResult(finalText));
+                        return;
+                    } finally {
+                        connection.disconnect();
+                    }
+                } catch (SocketTimeoutException e) {
+                    lastError = "AI server timed out (attempt " + attempt + "/" + MAX_ATTEMPTS + ").";
+                    Log.w(TAG, lastError, e);
+                } catch (Exception e) {
+                    lastError = e.getMessage() == null ? "AI request failed" : e.getMessage();
+                    Log.w(TAG, "AI attempt " + attempt + " failed: " + lastError, e);
+                    if (attempt == MAX_ATTEMPTS || lastError.startsWith("AI HTTP 4")) break;
                 }
 
-                JSONObject body = new JSONObject();
-                String cleanModel = model == null || model.trim().isEmpty() ? "qwen2.5:1.5b" : model.trim();
-                body.put("model", cleanModel);
-                body.put("messages", messages);
-                body.put("temperature", 0.2);
-                // Ollama streams by default. Disabling streaming keeps the response easy to parse
-                // and also works with OpenAI-compatible local servers.
-                body.put("stream", false);
-
-                byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
-                connection.setFixedLengthStreamingMode(bytes.length);
-                try (java.io.OutputStream out = connection.getOutputStream()) { out.write(bytes); }
-
-                int code = connection.getResponseCode();
-                InputStream stream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
-                String response = readAll(stream);
-                if (code < 200 || code >= 300) throw new IllegalStateException("AI HTTP " + code + ": " + compact(response));
-
-                JSONObject json = new JSONObject(response);
-                String text = extractText(json);
-                if (text.trim().isEmpty()) throw new IllegalStateException("AI returned no text: " + compact(response));
-                String finalText = text.trim();
-                main.post(() -> callback.onResult(finalText));
-            } catch (SocketTimeoutException e) {
-                Log.e(TAG, "AI request timed out", e);
-                main.post(() -> callback.onError("AI server timed out. Make sure Ollama is running and reachable from the tablet."));
-            } catch (Exception e) {
-                Log.e(TAG, "AI request failed", e);
-                String message = e.getMessage() == null ? "AI request failed" : e.getMessage();
-                main.post(() -> callback.onError(message));
-            } finally {
-                if (connection != null) connection.disconnect();
+                try { Thread.sleep(400L * attempt); } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
             }
+
+            final String error = lastError + " Make sure the local AI server is running and the tablet can reach the configured endpoint.";
+            main.post(() -> callback.onError(error));
         });
     }
 
-    /** Supports both OpenAI chat responses and native Ollama /api/chat responses. */
+    private String normalizeEndpoint(String endpoint) {
+        if (endpoint == null) return "";
+        String value = endpoint.trim();
+        if (value.isEmpty()) return "";
+        // Accept either a full /api/chat URL or an Ollama base URL.
+        if (!value.endsWith("/api/chat") && (value.endsWith("/api") || value.endsWith("/"))) {
+            value = value.replaceFirst("/+$", "") + "/chat";
+        }
+        if (!value.contains("/api/chat") && !value.matches("^https?://[^/]+$")) return value;
+        if (value.matches("^https?://[^/]+$")) value = value + "/api/chat";
+        return value;
+    }
+
     private String extractText(JSONObject json) {
-        // OpenAI-compatible: {"choices":[{"message":{"content":"..."}}]}
         JSONArray choices = json.optJSONArray("choices");
         if (choices != null && choices.length() > 0) {
             JSONObject choice = choices.optJSONObject(0);
@@ -91,15 +121,11 @@ public final class NovaAiClient {
                 if (!content.isEmpty()) return content;
             }
         }
-
-        // Ollama native: {"message":{"role":"assistant","content":"..."}}
         JSONObject message = json.optJSONObject("message");
         if (message != null) {
             String content = message.optString("content", "");
             if (!content.isEmpty()) return content;
         }
-
-        // Some compatible local servers return a direct response field.
         return json.optString("response", "");
     }
 
