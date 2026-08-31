@@ -11,6 +11,7 @@ public final class NovaBrain {
     private static final String TAG = "NovaBrain";
     private static final String CHAT_SYSTEM = "You are NOVA, a helpful Android voice assistant. Answer naturally, clearly and briefly. Never output JSON in normal conversation. Never claim an action was performed unless it was actually performed. If the user asks for a device action, use the action system rather than pretending.";
     private final NovaMemory memory;
+    private final NovaContextEngine contextEngine;
     private final NovaActionEngine actions;
     private final NovaAgentPlanner planner;
     private final NovaAiClient ai;
@@ -25,6 +26,7 @@ public final class NovaBrain {
         Context app = context.getApplicationContext();
         this.listener = listener;
         memory = new NovaMemory(app);
+        contextEngine = new NovaContextEngine(app);
         taskStore = new NovaTaskStore(app);
         ai = new NovaAiClient();
         toolExecutor = new NovaToolExecutor(app);
@@ -84,13 +86,18 @@ public final class NovaBrain {
             system.put("role", "system");
             system.put("content", CHAT_SYSTEM);
             messages.put(system);
-            String facts = memory.factsSummary();
-            if (facts != null && !facts.trim().isEmpty()) {
+
+            JSONArray recent = contextEngine.recentMessages();
+            for (int i = 0; i < recent.length(); i++) messages.put(recent.optJSONObject(i));
+
+            String relevant = contextEngine.relevantMemory(command);
+            if (relevant != null && !relevant.trim().isEmpty()) {
                 JSONObject memoryMessage = new JSONObject();
                 memoryMessage.put("role", "system");
-                memoryMessage.put("content", "Useful saved local memory:\n" + facts);
+                memoryMessage.put("content", "Relevant saved local memory:\n" + relevant);
                 messages.put(memoryMessage);
             }
+
             JSONObject user = new JSONObject();
             user.put("role", "user");
             user.put("content", command);
@@ -183,10 +190,12 @@ public final class NovaBrain {
     public boolean confirmPendingTask() { return agentLoop.confirmAndResume(); }
     public void declinePendingTask() { agentLoop.cancelPendingConfirmation(); }
     public NovaTaskStore.State taskState() { return taskStore.state(); }
-    public boolean hasPendingConfirmation() { return agentLoopHasPendingConfirmation(); }
+    public boolean hasPendingConfirmation() { return taskStore.hasPendingConfirmation(); }
     public String pendingConfirmationAction() { return taskStore.pendingAction(); }
 
-    private boolean agentLoopHasPendingConfirmation() { return taskStore.hasPendingConfirmation(); }
+    public JSONObject currentContext(String command) {
+        return contextEngine.build(command);
+    }
 
     private String readCurrentScreen() {
         try {
