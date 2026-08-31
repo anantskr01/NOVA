@@ -64,7 +64,7 @@ public final class NovaBrain {
         memory.remember("user", text);
         status("BRAIN • UNDERSTANDING");
 
-        // Fast, deterministic commands are handled locally and never waste an AI request.
+        // Deterministic device commands must never depend on the AI connection.
         if (handleLocalCommand(text)) return true;
 
         if (endpoint == null || endpoint.trim().isEmpty()) {
@@ -72,8 +72,6 @@ public final class NovaBrain {
             return false;
         }
 
-        // Normal conversation is deliberately kept out of the autonomous planner.
-        // This prevents simple questions from becoming fragile action-JSON tasks.
         if (!needsAutonomousAgent(text)) {
             chatDirectly(text, endpoint, apiKey, model);
             return true;
@@ -92,8 +90,6 @@ public final class NovaBrain {
             system.put("content", CHAT_SYSTEM);
             messages.put(system);
 
-            // Include a small amount of recent conversational context so NOVA feels
-            // like an assistant rather than a stateless question-answer endpoint.
             String facts = memory.factsSummary();
             if (facts != null && !facts.trim().isEmpty()) {
                 JSONObject memoryMessage = new JSONObject();
@@ -126,7 +122,7 @@ public final class NovaBrain {
     }
 
     private boolean needsAutonomousAgent(String command) {
-        String c = command.toLowerCase(Locale.ROOT).trim();
+        String c = normalize(command);
         String[] actionStarts = {
                 "open ", "launch ", "start ", "send ", "message ", "text ", "call ",
                 "tap ", "click ", "press ", "type ", "write ", "enter ", "play ",
@@ -141,42 +137,93 @@ public final class NovaBrain {
                 c.contains("on my screen") || c.contains("in the app");
     }
 
+    /** Handles common local intents before any network/model call. */
     private boolean handleLocalCommand(String command) {
-        String c = command.toLowerCase(Locale.ROOT);
+        String c = normalize(command);
         try {
-            if (containsAny(c, "go home", "home screen", "take me home")) return actions.execute("home", "");
-            if (containsAny(c, "go back", "press back", "back")) return actions.execute("back", "");
-            if (containsAny(c, "recent apps", "open recents", "show recents")) return actions.execute("recents", "");
-            if (containsAny(c, "show notifications", "open notifications", "notifications")) return actions.execute("notifications", "");
-            if (containsAny(c, "quick settings", "open quick settings")) return actions.execute("quick_settings", "");
-            if (containsAny(c, "scroll up", "swipe up")) return actions.execute("scroll_up", "");
-            if (containsAny(c, "scroll down", "swipe down")) return actions.execute("scroll_down", "");
-            if (containsAny(c, "swipe left", "go left")) return actions.execute("swipe_left", "");
-            if (containsAny(c, "swipe right", "go right")) return actions.execute("swipe_right", "");
-            if (containsAny(c, "open settings", "settings")) return actions.execute("settings", "");
-            if (containsAny(c, "read screen", "what is on screen", "describe screen", "what can you see")) {
+            if (isAny(c, "go home", "home screen", "take me home")) return actions.execute("home", "");
+            if (isAny(c, "go back", "press back", "back")) return actions.execute("back", "");
+            if (isAny(c, "recent apps", "open recents", "show recents")) return actions.execute("recents", "");
+            if (isAny(c, "show notifications", "open notifications", "notifications")) return actions.execute("notifications", "");
+            if (isAny(c, "quick settings", "open quick settings")) return actions.execute("quick_settings", "");
+            if (isAny(c, "scroll up", "swipe up")) return actions.execute("scroll_up", "");
+            if (isAny(c, "scroll down", "swipe down")) return actions.execute("scroll_down", "");
+            if (isAny(c, "swipe left", "go left")) return actions.execute("swipe_left", "");
+            if (isAny(c, "swipe right", "go right")) return actions.execute("swipe_right", "");
+            if (isAny(c, "open settings", "settings")) return actions.execute("settings", "");
+
+            // Keep screen observation completely local. This is deliberately checked
+            // before endpoint validation and before autonomous-agent routing.
+            if (isScreenReadCommand(c)) {
+                status("BRAIN • LOCAL SCREEN OBSERVATION");
                 String screen = readCurrentScreen();
-                reply(screen == null || screen.trim().isEmpty() ? "I cannot read the current screen." : screen);
+                if (screen == null || screen.trim().isEmpty()) {
+                    reply("I cannot read the current screen.");
+                } else {
+                    reply(screen);
+                }
                 return true;
             }
+
             if (c.startsWith("remember ")) {
-                String note = command.substring("remember ".length()).trim();
-                if (!note.isEmpty()) { memory.rememberFact("note", note); reply("I'll remember that locally."); return true; }
-            }
-            if (containsAny(c, "what do you remember", "what do you know about me")) { reply(memory.factsSummary()); return true; }
-            if (c.startsWith("open ")) {
-                String appName = command.substring(5).trim();
-                if (!appName.isEmpty()) {
-                    boolean opened = actions.execute("open_app", appName);
-                    if (opened) { reply("Done — " + appName + " is open."); return true; }
+                String note = command.substring(Math.min(command.length(), "remember ".length())).trim();
+                if (!note.isEmpty()) {
+                    memory.rememberFact("note", note);
+                    reply("I'll remember that locally.");
+                    return true;
                 }
             }
-        } catch (Exception e) { Log.e(TAG, "LOCAL COMMAND ERROR", e); }
+
+            if (isAny(c, "what do you remember", "what do you know about me")) {
+                reply(memory.factsSummary());
+                return true;
+            }
+
+            if (c.startsWith("open ")) {
+                String appName = command.substring(Math.min(command.length(), 5)).trim();
+                if (!appName.isEmpty()) {
+                    boolean opened = actions.execute("open_app", appName);
+                    if (opened) {
+                        reply("Done — " + appName + " is open.");
+                        return true;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "LOCAL COMMAND ERROR", e);
+        }
         return false;
     }
 
+    private boolean isScreenReadCommand(String c) {
+        if (c == null || c.isEmpty()) return false;
+        return isAny(c,
+                "read screen",
+                "read my screen",
+                "what is on screen",
+                "what is on my screen",
+                "what's on screen",
+                "what's on my screen",
+                "whats on screen",
+                "whats on my screen",
+                "tell me whats on screen",
+                "tell me what is on screen",
+                "tell me what's on screen",
+                "describe screen",
+                "describe my screen",
+                "what can you see",
+                "what do you see on screen",
+                "what do you see on my screen",
+                "screen reader",
+                "inspect screen",
+                "understand screen");
+    }
+
     public void think(String command, String endpoint, String apiKey, String model) {
-        if (agentLoop.isRunning()) { reply("I'm still processing the previous request."); return; }
+        if (agentLoop.isRunning()) {
+            reply("I'm still processing the previous request.");
+            return;
+        }
         status("BRAIN • AGENT STARTING");
         agentLoop.start(command, endpoint, apiKey, model);
     }
@@ -195,19 +242,37 @@ public final class NovaBrain {
             String snapshot = service.getUiSnapshot();
             if (snapshot == null || snapshot.trim().isEmpty()) return service.getVisibleTextSummary();
             return snapshot;
-        } catch (Exception e) { Log.e(TAG, "SCREEN READ ERROR", e); return "Unable to read current screen."; }
+        } catch (Exception e) {
+            Log.e(TAG, "SCREEN READ ERROR", e);
+            return "Unable to read current screen.";
+        }
     }
 
     private boolean clickVisibleText(String text) {
         try {
             GestureAccessibilityService service = GestureAccessibilityService.getInstance();
             return service != null && service.clickText(text);
-        } catch (Exception e) { Log.e(TAG, "CLICK ERROR", e); return false; }
+        } catch (Exception e) {
+            Log.e(TAG, "CLICK ERROR", e);
+            return false;
+        }
     }
 
-    private boolean containsAny(String value, String... options) {
+    private String normalize(String value) {
+        if (value == null) return "";
+        return value.toLowerCase(Locale.ROOT)
+                .replace('’', '\'')
+                .replaceAll("[^\\p{L}\\p{N}']+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private boolean isAny(String value, String... options) {
         if (value == null) return false;
-        for (String option : options) if (value.equals(option) || value.contains(option)) return true;
+        for (String option : options) {
+            String normalizedOption = normalize(option);
+            if (value.equals(normalizedOption) || value.contains(normalizedOption)) return true;
+        }
         return false;
     }
 
