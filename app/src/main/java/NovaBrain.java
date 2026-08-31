@@ -63,22 +63,15 @@ public final class NovaBrain {
         String text = command.trim();
         memory.remember("user", text);
         status("BRAIN • UNDERSTANDING");
-
-        // Fast, deterministic commands are handled locally and never waste an AI request.
         if (handleLocalCommand(text)) return true;
-
         if (endpoint == null || endpoint.trim().isEmpty()) {
             reply("My AI core is not configured yet.");
             return false;
         }
-
-        // Normal conversation is deliberately kept out of the autonomous planner.
-        // This prevents simple questions from becoming fragile action-JSON tasks.
         if (!needsAutonomousAgent(text)) {
             chatDirectly(text, endpoint, apiKey, model);
             return true;
         }
-
         think(text, endpoint, apiKey, model);
         return true;
     }
@@ -91,9 +84,6 @@ public final class NovaBrain {
             system.put("role", "system");
             system.put("content", CHAT_SYSTEM);
             messages.put(system);
-
-            // Include a small amount of recent conversational context so NOVA feels
-            // like an assistant rather than a stateless question-answer endpoint.
             String facts = memory.factsSummary();
             if (facts != null && !facts.trim().isEmpty()) {
                 JSONObject memoryMessage = new JSONObject();
@@ -101,12 +91,10 @@ public final class NovaBrain {
                 memoryMessage.put("content", "Useful saved local memory:\n" + facts);
                 messages.put(memoryMessage);
             }
-
             JSONObject user = new JSONObject();
             user.put("role", "user");
             user.put("content", command);
             messages.put(user);
-
             ai.chat(endpoint, apiKey, model, messages, new NovaAiClient.Callback() {
                 @Override public void onResult(String text) {
                     memory.remember("assistant", text);
@@ -142,7 +130,7 @@ public final class NovaBrain {
     }
 
     private boolean handleLocalCommand(String command) {
-        String c = command.toLowerCase(Locale.ROOT);
+        String c = command.toLowerCase(Locale.ROOT).trim();
         try {
             if (containsAny(c, "go home", "home screen", "take me home")) return actions.execute("home", "");
             if (containsAny(c, "go back", "press back", "back")) return actions.execute("back", "");
@@ -154,9 +142,19 @@ public final class NovaBrain {
             if (containsAny(c, "swipe left", "go left")) return actions.execute("swipe_left", "");
             if (containsAny(c, "swipe right", "go right")) return actions.execute("swipe_right", "");
             if (containsAny(c, "open settings", "settings")) return actions.execute("settings", "");
-            if (containsAny(c, "read screen", "what is on screen", "describe screen", "what can you see")) {
+            if (containsAny(c,
+                    "read screen", "read my screen", "read the screen",
+                    "what is on screen", "what is on my screen", "what's on screen",
+                    "what's on my screen", "whats on screen", "whats on my screen",
+                    "tell me what's on screen", "tell me what's on my screen",
+                    "tell me what is on screen", "tell me what is on my screen",
+                    "show me what's on screen", "show me what's on my screen",
+                    "describe screen", "describe my screen", "describe the screen",
+                    "what can you see")) {
                 String screen = readCurrentScreen();
-                reply(screen == null || screen.trim().isEmpty() ? "I cannot read the current screen." : screen);
+                reply(screen == null || screen.trim().isEmpty()
+                        ? "I cannot read the current screen."
+                        : screen);
                 return true;
             }
             if (c.startsWith("remember ")) {
@@ -185,8 +183,10 @@ public final class NovaBrain {
     public boolean confirmPendingTask() { return agentLoop.confirmAndResume(); }
     public void declinePendingTask() { agentLoop.cancelPendingConfirmation(); }
     public NovaTaskStore.State taskState() { return taskStore.state(); }
-    public boolean hasPendingConfirmation() { return taskStore.hasPendingConfirmation(); }
+    public boolean hasPendingConfirmation() { return agentLoopHasPendingConfirmation(); }
     public String pendingConfirmationAction() { return taskStore.pendingAction(); }
+
+    private boolean agentLoopHasPendingConfirmation() { return taskStore.hasPendingConfirmation(); }
 
     private String readCurrentScreen() {
         try {
