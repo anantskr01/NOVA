@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
 import android.graphics.Point;
+import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -98,7 +100,6 @@ public class GestureAccessibilityService extends AccessibilityService {
         for (int i = 0; i < node.getChildCount(); i++) collectClickableNodes(node.getChild(i), out, depth + 1);
     }
 
-    /** Finds the best visible match instead of blindly clicking the first matching node. */
     public boolean clickText(String requested) {
         if (requested == null || requested.trim().isEmpty()) return false;
         AccessibilityNodeInfo root = getRootInActiveWindow();
@@ -204,6 +205,66 @@ public class GestureAccessibilityService extends AccessibilityService {
         });
     }
 
+    /** Dispatch a one-shot tap in screen pixels for the remote device agent. */
+    public boolean tapCoordinates(float x, float y) {
+        if (Float.isNaN(x) || Float.isNaN(y)) return false;
+        Point size = getScreenSize();
+        if (x < 0 || y < 0 || x >= size.x || y >= size.y) return false;
+        Path path = new Path();
+        path.moveTo(x, y);
+        GestureDescription gesture = new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(path, 0, 1))
+                .build();
+        return dispatchGesture(gesture, new GestureResultCallback() {
+            @Override public void onCompleted(GestureDescription gestureDescription) { }
+            @Override public void onCancelled(GestureDescription gestureDescription) { }
+        }, null);
+    }
+
+    /** Dispatch a bounded arbitrary swipe in screen pixels. */
+    public boolean swipeCoordinates(float x1, float y1, float x2, float y2, long durationMs) {
+        if (Float.isNaN(x1) || Float.isNaN(y1) || Float.isNaN(x2) || Float.isNaN(y2)) return false;
+        Point size = getScreenSize();
+        if (x1 < 0 || y1 < 0 || x2 < 0 || y2 < 0 || x1 >= size.x || x2 >= size.x || y1 >= size.y || y2 >= size.y) return false;
+        Path path = new Path();
+        path.moveTo(x1, y1);
+        path.lineTo(x2, y2);
+        long duration = Math.max(50L, Math.min(3000L, durationMs));
+        GestureDescription gesture = new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(path, 0, duration))
+                .build();
+        return dispatchGesture(gesture, null, null);
+    }
+
+    /** Replace the currently focused editable field's contents. */
+    public boolean typeText(String text) {
+        if (text == null) return false;
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        AccessibilityNodeInfo target = findFocusedEditable(root, 0);
+        if (target == null) return false;
+        Bundle args = new Bundle();
+        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
+        return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
+    }
+
+    private AccessibilityNodeInfo findFocusedEditable(AccessibilityNodeInfo node, int depth) {
+        if (node == null || depth > 20) return null;
+        if (node.isFocused() && node.isEditable() && node.isEnabled()) return node;
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo found = findFocusedEditable(node.getChild(i), depth + 1);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    /** Submit the focused editable field on Android versions exposing IME_ENTER. */
+    public boolean pressEnter() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false;
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        AccessibilityNodeInfo target = findFocusedEditable(root, 0);
+        return target != null && target.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
+    }
+
     public void swipeRight() {
         Point size = getScreenSize();
         float y = size.y * 0.50f, centerX = size.x * 0.50f, distance = size.x * HORIZONTAL_DISTANCE;
@@ -263,24 +324,11 @@ public class GestureAccessibilityService extends AccessibilityService {
                 dispatchPendingFingerMovement();
             }
         });
-
         if (!accepted) {
             fingerGestureRunning = false;
-            pendingFingerX = clamp(pendingFingerX + deltaX, -MAX_PENDING_X, MAX_PENDING_X);
-            pendingFingerY = clamp(pendingFingerY + deltaY, -MAX_PENDING_Y, MAX_PENDING_Y);
-            mainHandler.postDelayed(this::dispatchPendingFingerMovement, 40L);
+            dispatchPendingFingerMovement();
         }
     }
 
     private float clamp(float value, float min, float max) { return Math.max(min, Math.min(max, value)); }
-
-    @Override public void onDestroy() {
-        mainHandler.removeCallbacksAndMessages(null);
-        pendingFingerX = 0f;
-        pendingFingerY = 0f;
-        fingerGestureRunning = false;
-        if (instance == this) instance = null;
-        Log.d(TAG, "NOVA ACCESSIBILITY SERVICE DESTROYED");
-        super.onDestroy();
-    }
 }
