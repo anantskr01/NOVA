@@ -7,29 +7,137 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/** Central registry for NOVA capabilities. */
+/**
+ * Central capability registry for NOVA.
+ *
+ * The registry defines what the agent may request, validates the basic tool
+ * envelope, and records whether a side effect requires explicit confirmation.
+ * Execution remains owned by the appropriate executor.
+ */
 public final class NovaToolRegistry {
     public static final int MAX_VALUE_LENGTH = 4096;
-    public static final class Tool { public final String type; public final String description; public final boolean requiresConfirmation; private Tool(String type,String description,boolean requiresConfirmation){this.type=type;this.description=description;this.requiresConfirmation=requiresConfirmation;} }
-    private final Map<String,Tool> tools=new LinkedHashMap<>();
-    public NovaToolRegistry(){
-        register("home","Go to the Android home screen",false); register("back","Navigate back",false); register("recents","Open recent apps",false);
-        register("notifications","Open the notification shade",false); register("quick_settings","Open Android quick settings",false);
-        register("scroll_up","Scroll upward",false); register("scroll_down","Scroll downward",false); register("swipe_left","Swipe left",false); register("swipe_right","Swipe right",false);
-        register("open_url","Open a web URL",false); register("open_package","Open an installed Android package",false); register("open_app","Open an installed application by name",false); register("settings","Open Android settings",false);
-        register("click_text","Activate visible accessibility text",false); register("click_index","Activate a numbered visible accessibility item",false); register("click_coordinates","Tap screen coordinates using a bounded gesture",false);
-        register("long_click_text","Long-press visible accessibility text",false); register("type_text","Enter text into a visible editable field; value may be plain text or JSON with target/text",false); register("wait","Wait briefly for UI state to settle",false);
-        register("search","Perform a web search",false); register("read_screen","Inspect the currently visible accessibility UI",false); register("verify_screen_contains","Verify visible accessibility UI contains expected text",false); register("none","No operation",false);
-        register("web.search","Search the internet",false); register("web.open","Open a web page",false); register("web.fetch","Fetch readable web content",false);
-        register("memory.remember","Store a local memory item",false); register("memory.recall","Recall local memory",false); register("apps.list","List installed launchable applications",false);
-        register("files.read","Read an allowed local project file",false); register("files.write","Write an allowed local project file",false); register("files.create","Create an allowed local project file",false); register("code.create","Create source code in an allowed project workspace",false); register("code.modify","Modify source code in an allowed project workspace",false);
-        register("communication.send_message","Send an external message on the user's behalf",true); register("communication.make_call","Start an external phone call",true);
+
+    public enum Kind { ANDROID, SCREEN, WEB, MEMORY, APPS, FILES, COMMUNICATION, CONTROL }
+
+    public static final class Tool {
+        public final String type;
+        public final String description;
+        public final Kind kind;
+        public final boolean requiresConfirmation;
+        public final boolean requiresValue;
+
+        private Tool(String type, String description, Kind kind,
+                     boolean requiresConfirmation, boolean requiresValue) {
+            this.type = type;
+            this.description = description;
+            this.kind = kind;
+            this.requiresConfirmation = requiresConfirmation;
+            this.requiresValue = requiresValue;
+        }
     }
-    private void register(String type,String description,boolean confirmation){tools.put(type,new Tool(type,description,confirmation));}
-    public boolean contains(String type){return type!=null&&tools.containsKey(type.trim().toLowerCase(Locale.ROOT));}
-    public Tool get(String type){return type==null?null:tools.get(type.trim().toLowerCase(Locale.ROOT));}
-    public boolean validate(String type,String value){return contains(type)&&(value==null||value.length()<=MAX_VALUE_LENGTH);}
-    public boolean requiresConfirmation(String type){Tool tool=get(type);return tool!=null&&tool.requiresConfirmation;}
-    public Set<String> types(){return Collections.unmodifiableSet(new LinkedHashSet<>(tools.keySet()));}
-    public String promptSummary(){StringBuilder out=new StringBuilder();for(Tool tool:tools.values()){out.append("- ").append(tool.type).append(": ").append(tool.description);if(tool.requiresConfirmation)out.append(" [CONFIRMATION REQUIRED]");out.append('\n');}return out.toString().trim();}
+
+    private final Map<String, Tool> tools = new LinkedHashMap<>();
+
+    public NovaToolRegistry() {
+        register("home", "Go to the Android home screen", Kind.ANDROID, false, false);
+        register("back", "Navigate back", Kind.ANDROID, false, false);
+        register("recents", "Open recent apps", Kind.ANDROID, false, false);
+        register("notifications", "Open the notification shade", Kind.ANDROID, false, false);
+        register("quick_settings", "Open Android quick settings", Kind.ANDROID, false, false);
+        register("scroll_up", "Scroll upward", Kind.ANDROID, false, false);
+        register("scroll_down", "Scroll downward", Kind.ANDROID, false, false);
+        register("swipe_left", "Swipe left", Kind.ANDROID, false, false);
+        register("swipe_right", "Swipe right", Kind.ANDROID, false, false);
+        register("open_url", "Open a web URL", Kind.ANDROID, false, true);
+        register("open_package", "Open an installed Android package", Kind.ANDROID, false, true);
+        register("open_app", "Open an installed application by name", Kind.APPS, false, true);
+        register("settings", "Open Android settings", Kind.ANDROID, false, false);
+
+        register("click_text", "Activate visible accessibility text", Kind.SCREEN, false, true);
+        register("click_index", "Activate a numbered visible accessibility item", Kind.SCREEN, false, true);
+        register("click_coordinates", "Tap screen coordinates using a bounded gesture", Kind.SCREEN, false, true);
+        register("long_click_text", "Long-press visible accessibility text", Kind.SCREEN, false, true);
+        register("type_text", "Enter text into a visible editable field", Kind.SCREEN, false, true);
+        register("read_screen", "Inspect the currently visible accessibility UI", Kind.SCREEN, false, false);
+        register("verify_screen_contains", "Verify visible UI contains expected text", Kind.SCREEN, false, true);
+        register("wait", "Wait briefly for UI state to settle", Kind.CONTROL, false, false);
+        register("none", "No operation", Kind.CONTROL, false, false);
+
+        register("search", "Perform a web search", Kind.WEB, false, true);
+        register("web.search", "Search the internet", Kind.WEB, false, true);
+        register("web.open", "Open a web page", Kind.WEB, false, true);
+        register("web.fetch", "Fetch readable web content", Kind.WEB, false, true);
+
+        register("memory.remember", "Store a local memory item", Kind.MEMORY, false, true);
+        register("memory.recall", "Recall local memory", Kind.MEMORY, false, false);
+        register("apps.list", "List installed launchable applications", Kind.APPS, false, false);
+
+        register("files.read", "Read an allowed local NOVA workspace file", Kind.FILES, false, true);
+        register("files.write", "Write an allowed local NOVA workspace file", Kind.FILES, false, true);
+        register("files.create", "Create an allowed local NOVA workspace file", Kind.FILES, false, true);
+        register("code.create", "Create source code in the allowed NOVA workspace", Kind.FILES, false, true);
+        register("code.modify", "Modify source code in the allowed NOVA workspace", Kind.FILES, false, true);
+
+        register("communication.send_message", "Send an external message on the user's behalf", Kind.COMMUNICATION, true, true);
+        register("communication.make_call", "Start an external phone call", Kind.COMMUNICATION, true, true);
+    }
+
+    private void register(String type, String description, Kind kind,
+                          boolean confirmation, boolean requiresValue) {
+        tools.put(type.toLowerCase(Locale.ROOT),
+                new Tool(type, description, kind, confirmation, requiresValue));
+    }
+
+    public boolean contains(String type) {
+        return type != null && tools.containsKey(normalize(type));
+    }
+
+    public Tool get(String type) {
+        return type == null ? null : tools.get(normalize(type));
+    }
+
+    /** Validate the complete tool envelope before any executor is called. */
+    public boolean validate(String type, String value) {
+        Tool tool = get(type);
+        if (tool == null) return false;
+        if (value != null && value.length() > MAX_VALUE_LENGTH) return false;
+        return !tool.requiresValue || (value != null && !value.trim().isEmpty());
+    }
+
+    public boolean requiresConfirmation(String type) {
+        Tool tool = get(type);
+        return tool != null && tool.requiresConfirmation;
+    }
+
+    public boolean requiresValue(String type) {
+        Tool tool = get(type);
+        return tool != null && tool.requiresValue;
+    }
+
+    public Kind kind(String type) {
+        Tool tool = get(type);
+        return tool == null ? null : tool.kind;
+    }
+
+    public Set<String> types() {
+        return Collections.unmodifiableSet(new LinkedHashSet<>(tools.keySet()));
+    }
+
+    /** Stable, compact capability description for the agent prompt. */
+    public String promptSummary() {
+        StringBuilder out = new StringBuilder();
+        for (Tool tool : tools.values()) {
+            out.append("- ").append(tool.type)
+                    .append(" [").append(tool.kind.name().toLowerCase(Locale.ROOT)).append("]")
+                    .append(": ").append(tool.description);
+            if (tool.requiresValue) out.append(" {value required}");
+            if (tool.requiresConfirmation) out.append(" [CONFIRMATION REQUIRED]");
+            out.append('\n');
+        }
+        return out.toString().trim();
+    }
+
+    private String normalize(String type) {
+        return type.trim().toLowerCase(Locale.ROOT);
+    }
 }
