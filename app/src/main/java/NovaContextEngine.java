@@ -2,6 +2,7 @@ package com.aircontrol;
 
 import android.content.Context;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.Locale;
@@ -29,9 +30,13 @@ public final class NovaContextEngine {
             JSONObject item = source.optJSONObject(i);
             if (item == null) continue;
             JSONObject copy = new JSONObject();
-            copy.put("role", item.optString("role", "user"));
-            copy.put("content", trim(item.optString("content", ""), MAX_MESSAGE_CHARS));
-            result.put(copy);
+            try {
+                copy.put("role", item.optString("role", "user"));
+                copy.put("content", trim(item.optString("content", ""), MAX_MESSAGE_CHARS));
+                result.put(copy);
+            } catch (JSONException ignored) {
+                // Skip malformed history entries without failing the whole context build.
+            }
         }
         return result;
     }
@@ -45,9 +50,13 @@ public final class NovaContextEngine {
 
     public JSONObject build(String currentCommand) {
         JSONObject context = new JSONObject();
-        context.put("command", trim(currentCommand, MAX_MESSAGE_CHARS));
-        context.put("recent_messages", recentMessages());
-        context.put("relevant_memory", relevantMemory(currentCommand));
+        try {
+            context.put("command", trim(currentCommand, MAX_MESSAGE_CHARS));
+            context.put("recent_messages", recentMessages());
+            context.put("relevant_memory", relevantMemory(currentCommand));
+        } catch (JSONException ignored) {
+            // JSONObject#put can fail only for invalid JSON values; all values here are safe.
+        }
         return context;
     }
 
