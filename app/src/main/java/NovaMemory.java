@@ -1,138 +1,17 @@
 package com.aircontrol;
 
-import android.content.Context;
-import android.content.SharedPreferences;
-
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-
-/** Persistent, user-controlled NOVA memory stored locally on the tablet. */
-public final class NovaMemory {
-    private static final String PREFS = "nova_memory";
-    private static final String HISTORY = "history";
-    private static final String FACTS = "facts";
-    private static final int MAX_MESSAGES = 24;
-    private static final int MAX_FACTS = 100;
-
-    private final SharedPreferences prefs;
-
-    public NovaMemory(Context context) {
-        prefs = context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-    }
-
-    public synchronized void remember(String role, String text) {
-        if (text == null || text.trim().isEmpty()) return;
-        JSONArray history = read();
-        JSONObject item = new JSONObject();
-        try {
-            item.put("role", role == null ? "user" : role);
-            item.put("content", text.trim());
-            item.put("timestamp", System.currentTimeMillis());
-            history.put(item);
-        } catch (JSONException ignored) { }
-        while (history.length() > MAX_MESSAGES) history.remove(0);
-        prefs.edit().putString(HISTORY, history.toString()).apply();
-    }
-
-    public synchronized void rememberFact(String key, String value) {
-        if (!valid(key, value)) return;
-        JSONArray facts = readFacts();
-        boolean replaced = false;
-        String normalized = normalize(key);
-        for (int i = 0; i < facts.length(); i++) {
-            JSONObject item = facts.optJSONObject(i);
-            if (item != null && normalized.equals(normalize(item.optString("key")))) {
-                try {
-                    item.put("key", normalized);
-                    item.put("value", value.trim());
-                    item.put("updatedAt", System.currentTimeMillis());
-                } catch (JSONException ignored) { }
-                replaced = true;
-                break;
-            }
-        }
-        if (!replaced) {
-            JSONObject item = new JSONObject();
-            try {
-                item.put("key", normalized);
-                item.put("value", value.trim());
-                item.put("updatedAt", System.currentTimeMillis());
-                facts.put(item);
-            } catch (JSONException ignored) { }
-        }
-        while (facts.length() > MAX_FACTS) facts.remove(0);
-        prefs.edit().putString(FACTS, facts.toString()).apply();
-    }
-
-    /** Search only relevant stored facts instead of sending the entire memory to the model. */
-    public synchronized JSONArray searchFacts(String query, int limit) {
-        JSONArray result = new JSONArray();
-        if (query == null || query.trim().isEmpty()) return result;
-        String[] terms = query.toLowerCase(Locale.ROOT).split("\\s+");
-        List<ScoredFact> scored = new ArrayList<>();
-        JSONArray facts = readFacts();
-        for (int i = 0; i < facts.length(); i++) {
-            JSONObject fact = facts.optJSONObject(i);
-            if (fact == null) continue;
-            String text = (fact.optString("key", "") + " " + fact.optString("value", "")).toLowerCase(Locale.ROOT);
-            int score = 0;
-            for (String term : terms) if (term.length() > 1 && text.contains(term)) score++;
-            if (score > 0) scored.add(new ScoredFact(fact, score));
-        }
-        scored.sort((a, b) -> Integer.compare(b.score, a.score));
-        int max = Math.min(Math.max(1, limit <= 0 ? 5 : limit), scored.size());
-        for (int i = 0; i < max; i++) result.put(scored.get(i).fact);
-        return result;
-    }
-
-    public synchronized String factsSummary() {
-        JSONArray facts = readFacts();
-        if (facts.length() == 0) return "No saved facts.";
-        StringBuilder out = new StringBuilder();
-        for (int i = 0; i < facts.length(); i++) {
-            JSONObject item = facts.optJSONObject(i);
-            if (item == null) continue;
-            if (out.length() > 4000) break;
-            out.append(item.optString("key"))
-                    .append(": ")
-                    .append(item.optString("value"))
-                    .append('\n');
-        }
-        return out.toString().trim();
-    }
-
-    public synchronized JSONArray recent() { return read(); }
-
-    public synchronized void clear() { prefs.edit().remove(HISTORY).remove(FACTS).apply(); }
-
-    private JSONArray read() {
-        String raw = prefs.getString(HISTORY, "[]");
-        try { return new JSONArray(raw); }
-        catch (JSONException e) { return new JSONArray(); }
-    }
-
-    private JSONArray readFacts() {
-        String raw = prefs.getString(FACTS, "[]");
-        try { return new JSONArray(raw); }
-        catch (JSONException e) { return new JSONArray(); }
-    }
-
-    private static boolean valid(String key, String value) {
-        return key != null && !key.trim().isEmpty() && value != null && !value.trim().isEmpty();
-    }
-
-    private static String normalize(String key) {
-        return key == null ? "" : key.trim().toLowerCase(Locale.ROOT);
-    }
-
-    private static final class ScoredFact {
-        final JSONObject fact;
-        final int score;
-        ScoredFact(JSONObject fact, int score) { this.fact = fact; this.score = score; }
-    }
+import android.content.Context;import android.content.SharedPreferences;import org.json.JSONArray;import org.json.JSONException;import org.json.JSONObject;import java.util.ArrayList;import java.util.List;import java.util.Locale;
+/** Persistent, bounded, user-controlled NOVA memory stored locally on the tablet. */
+public final class NovaMemory{
+ private static final String PREFS="nova_memory",HISTORY="history",FACTS="facts";private static final int MAX_MESSAGES=24,MAX_FACTS=100,MAX_FACT_LENGTH=2048;
+ private final SharedPreferences prefs;public NovaMemory(Context c){prefs=c.getApplicationContext().getSharedPreferences(PREFS,Context.MODE_PRIVATE);}
+ public synchronized void remember(String role,String text){if(text==null||text.trim().isEmpty())return;String value=text.trim();if(value.length()>MAX_FACT_LENGTH*2)value=value.substring(0,MAX_FACT_LENGTH*2);JSONArray h=read();try{h.put(new JSONObject().put("role",role==null?"user":role).put("content",value).put("timestamp",System.currentTimeMillis()));}catch(JSONException ignored){}while(h.length()>MAX_MESSAGES)h.remove(0);prefs.edit().putString(HISTORY,h.toString()).apply();}
+ public synchronized void rememberFact(String key,String value){if(!valid(key,value))return;String normalized=normalize(key),clean=value.trim();if(clean.length()>MAX_FACT_LENGTH)clean=clean.substring(0,MAX_FACT_LENGTH);JSONArray facts=readFacts();boolean replaced=false;for(int i=0;i<facts.length();i++){JSONObject item=facts.optJSONObject(i);if(item!=null&&normalized.equals(normalize(item.optString("key")))){try{item.put("key",normalized).put("value",clean).put("updatedAt",System.currentTimeMillis());}catch(JSONException ignored){}replaced=true;break;}}if(!replaced)try{facts.put(new JSONObject().put("key",normalized).put("value",clean).put("updatedAt",System.currentTimeMillis()));}catch(JSONException ignored){}while(facts.length()>MAX_FACTS)facts.remove(0);prefs.edit().putString(FACTS,facts.toString()).apply();}
+ public synchronized boolean forgetFact(String key){if(key==null||key.trim().isEmpty())return false;String normalized=normalize(key);JSONArray facts=readFacts();boolean removed=false;for(int i=facts.length()-1;i>=0;i--){JSONObject item=facts.optJSONObject(i);if(item!=null&&normalized.equals(normalize(item.optString("key")))){facts.remove(i);removed=true;}}if(removed)prefs.edit().putString(FACTS,facts.toString()).apply();return removed;}
+ /** Returns only relevant facts, ranked by key/value matches, exact phrase, and recency. */
+ public synchronized JSONArray searchFacts(String query,int limit){JSONArray result=new JSONArray();if(query==null||query.trim().isEmpty())return result;String q=query.trim().toLowerCase(Locale.ROOT);String[] terms=q.split("\\s+");List<ScoredFact> scored=new ArrayList<>();JSONArray facts=readFacts();long now=System.currentTimeMillis();for(int i=0;i<facts.length();i++){JSONObject fact=facts.optJSONObject(i);if(fact==null)continue;String key=normalize(fact.optString("key")),value=fact.optString("value","").toLowerCase(Locale.ROOT),text=key+" "+value;int score=0;if(text.contains(q))score+=8;for(String term:terms)if(term.length()>1&&text.contains(term))score+=key.contains(term)?3:1;long age=Math.max(0,now-fact.optLong("updatedAt",now));if(age<86400000L)score++;if(score>0)scored.add(new ScoredFact(fact,score));}scored.sort((a,b)->Integer.compare(b.score,a.score));int max=Math.min(Math.max(1,limit<=0?5:limit),scored.size());for(int i=0;i<max;i++)result.put(scored.get(i).fact);return result;}
+ public synchronized String factsSummary(){JSONArray facts=readFacts();if(facts.length()==0)return"No saved facts.";StringBuilder out=new StringBuilder();for(int i=0;i<facts.length();i++){JSONObject item=facts.optJSONObject(i);if(item==null)continue;if(out.length()>4000)break;out.append(item.optString("key")).append(": ").append(item.optString("value")).append('\n');}return out.toString().trim();}
+ public synchronized JSONArray recent(){return read();}public synchronized void clear(){prefs.edit().remove(HISTORY).remove(FACTS).apply();}
+ private JSONArray read(){try{return new JSONArray(prefs.getString(HISTORY,"[]"));}catch(JSONException e){return new JSONArray();}}private JSONArray readFacts(){try{return new JSONArray(prefs.getString(FACTS,"[]"));}catch(JSONException e){return new JSONArray();}}private static boolean valid(String k,String v){return k!=null&&!k.trim().isEmpty()&&v!=null&&!v.trim().isEmpty();}private static String normalize(String k){return k==null?"":k.trim().toLowerCase(Locale.ROOT);}
+ private static final class ScoredFact{final JSONObject fact;final int score;ScoredFact(JSONObject f,int s){fact=f;score=s;}}
 }
