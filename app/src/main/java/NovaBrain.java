@@ -4,237 +4,51 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
-
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-/**
- * Central NOVA reasoning layer. Owns open-ended goals and coordinates
- * context -> model -> plan -> execution -> verification -> bounded recovery.
- */
+/** Central NOVA reasoning layer: context -> model -> tools -> model -> verification. */
 public final class NovaBrain {
-    private static final String TAG = "NovaBrain";
-    private static final String PREFS = "nova_ai_settings";
-    private static final String ENDPOINT = "endpoint";
-    private static final String MODEL = "model";
-    private static final int MAX_QUEUE = 6;
-    private static final int MAX_RECOVERY_ATTEMPTS = 1;
-    private static final int MAX_RELEVANT_FACTS = 8;
-
-    public interface Listener {
-        void onStatus(String text);
-        void onReply(String text);
+    private static final String TAG="NovaBrain"; private static final String PREFS="nova_ai_settings"; private static final String ENDPOINT="endpoint"; private static final String MODEL="model";
+    private static final int MAX_QUEUE=6, MAX_AGENT_TURNS=8, MAX_RELEVANT_FACTS=8;
+    public interface Listener{void onStatus(String text);void onReply(String text);}
+    private final Context context;private final Listener listener;private final NovaMemory memory;private final NovaSecureStore secureStore;private final NovaAiClient ai=new NovaAiClient();private final NovaActionEngine actions;private final NovaAgentPlanner planner;private final NovaToolRegistry tools;private final NovaWebIntelligence web=new NovaWebIntelligence();private final NovaTaskOrchestrator orchestrator=new NovaTaskOrchestrator();private final ExecutorService agentExecutor=Executors.newSingleThreadExecutor();private final Handler main=new Handler(Looper.getMainLooper());private final Deque<String> queue=new ArrayDeque<>();
+    private boolean processing,shutdown;private long generation;private String activeGoal="";
+    public NovaBrain(Context context,NovaActionEngine actions,NovaMemory memory,Listener listener){this.context=context.getApplicationContext();this.listener=listener;this.actions=actions;this.memory=memory==null?new NovaMemory(this.context):memory;this.secureStore=new NovaSecureStore(this.context);this.tools=new NovaToolRegistry();
+        planner=new NovaAgentPlanner(new NovaAgentPlanner.ActionExecutor(){
+            public boolean execute(String type,String value){return NovaBrain.this.actions!=null&&NovaBrain.this.actions.execute(type,value);}
+            public String readScreen(){GestureAccessibilityService s=GestureAccessibilityService.getInstance();return s==null?"Accessibility service is not connected.":s.getVisibleTextSummary();}
+            public boolean clickText(String text){GestureAccessibilityService s=GestureAccessibilityService.getInstance();return s!=null&&s.clickText(text);}
+            public boolean clickVisibleIndex(int index){GestureAccessibilityService s=GestureAccessibilityService.getInstance();return s!=null&&s.clickVisibleIndex(index);}
+            public String executeTool(String type,String value){return executeIntelligenceTool(type,value);}
+            public String executeParallel(String value){return executeParallelTools(value);}
+        },new NovaAgentPlanner.Listener(){public void status(String text){NovaBrain.this.status(text);}public void reply(String text){NovaBrain.this.reply(text);}},tools);
     }
-
-    private final Context context;
-    private final Listener listener;
-    private final NovaMemory memory;
-    private final NovaSecureStore secureStore;
-    private final NovaAiClient ai = new NovaAiClient();
-    private final NovaActionEngine actions;
-    private final NovaAgentPlanner planner;
-    private final NovaToolRegistry tools;
-    private final Handler main = new Handler(Looper.getMainLooper());
-    private final Deque<String> queue = new ArrayDeque<>();
-    private boolean processing;
-    private boolean shutdown;
-    private long generation;
-    private String activeGoal = "";
-
-    public NovaBrain(Context context, NovaActionEngine actions, NovaMemory memory, Listener listener) {
-        this.context = context.getApplicationContext();
-        this.listener = listener;
-        this.actions = actions;
-        this.memory = memory == null ? new NovaMemory(this.context) : memory;
-        this.secureStore = new NovaSecureStore(this.context);
-        this.tools = new NovaToolRegistry();
-
-        planner = new NovaAgentPlanner(new NovaAgentPlanner.ActionExecutor() {
-            @Override public boolean execute(String type, String value) {
-                return NovaBrain.this.actions != null && NovaBrain.this.actions.execute(type, value);
-            }
-            @Override public String readScreen() {
-                GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-                return service == null ? "Accessibility service is not connected." : service.getVisibleTextSummary();
-            }
-            @Override public boolean clickText(String text) {
-                GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-                return service != null && service.clickText(text);
-            }
-            @Override public boolean clickVisibleIndex(int index) {
-                GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-                return service != null && service.clickVisibleIndex(index);
-            }
-        }, new NovaAgentPlanner.Listener() {
-            @Override public void status(String text) { NovaBrain.this.status(text); }
-            @Override public void reply(String text) { NovaBrain.this.reply(text); }
-        }, tools);
-    }
-
-    public synchronized void think(String request) {
-        if (shutdown || request == null || request.trim().isEmpty()) return;
-        if (getEndpoint().isEmpty()) {
-            reply("My AI core isn't configured yet.");
-            return;
-        }
-        if (queue.size() >= MAX_QUEUE) {
-            reply("My task queue is full. Cancel or finish a task before adding another.");
-            return;
-        }
-        queue.offer(request.trim());
-        status(processing ? "BRAIN • GOAL QUEUED • " + queue.size() : "BRAIN • GOAL ACCEPTED");
-        processNextLocked();
-    }
-
-    public synchronized void cancelAllGoals() {
-        generation++;
-        queue.clear();
-        activeGoal = "";
-        processing = false;
-        status("BRAIN • TASKS CANCELLED");
-    }
-
-    public synchronized void cancelQueuedGoals() { cancelAllGoals(); }
-    public synchronized int queuedCount() { return queue.size(); }
-    public synchronized boolean isBusy() { return processing; }
-    public synchronized String activeGoal() { return activeGoal; }
-
-    private void processNextLocked() {
-        if (processing || shutdown) return;
-        activeGoal = queue.poll();
-        if (activeGoal == null) return;
-        processing = true;
-        memory.remember("user", activeGoal);
-        final long token = generation;
-        askAi(activeGoal, 0, "", token);
-    }
-
-    private void askAi(final String goal, final int recoveryAttempt, final String failureContext, final long token) {
-        synchronized (this) {
-            if (shutdown || token != generation) return;
-        }
-        status(recoveryAttempt == 0 ? "BRAIN • UNDERSTANDING → PLANNING" : "BRAIN • RECOVERING → REPLANNING");
-        try {
-            JSONArray messages = new JSONArray();
-
-            JSONObject system = new JSONObject();
-            system.put("role", "system");
-            system.put("content", buildSystemPrompt(recoveryAttempt > 0));
-            messages.put(system);
-
-            JSONObject contextMessage = new JSONObject();
-            contextMessage.put("role", "system");
-            String screen = getUiSnapshot();
-            JSONArray relevantFacts = memory.searchFacts(goal, MAX_RELEVANT_FACTS);
-            contextMessage.put("content", "Relevant saved NOVA memory:\n" + relevantFacts.toString()
-                    + "\n\nCurrent UI:\n" + NovaAgentPolicy.bounded(screen, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)
-                    + (failureContext.isEmpty() ? "" : "\n\nPrevious attempt failure:\n" + NovaAgentPolicy.bounded(failureContext, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)));
-            messages.put(contextMessage);
-
-            JSONArray history = memory.recent();
-            int start = Math.max(0, history.length() - NovaAgentPolicy.MAX_CONTEXT_ITEMS);
-            for (int i = start; i < history.length(); i++) {
-                JSONObject item = history.optJSONObject(i);
-                if (item != null) messages.put(item);
-            }
-
-            ai.chat(getEndpoint(), secureStore.getApiKey(), getModel(), messages, new NovaAiClient.Callback() {
-                @Override public void onResult(String text) {
-                    synchronized (NovaBrain.this) {
-                        if (shutdown || token != generation) return;
-                    }
-                    NovaAgentPlanner.ExecutionResult result = planner.executeDetailed(text);
-                    synchronized (NovaBrain.this) {
-                        if (shutdown || token != generation) return;
-                    }
-                    if (result.completed) {
-                        if (!result.say.isEmpty()) rememberAndReply(result.say);
-                        finishGoal(token);
-                        return;
-                    }
-                    if (recoveryAttempt < MAX_RECOVERY_ATTEMPTS) {
-                        String failure = "Failed action: " + result.failedAction
-                                + "\nObserved screen after failure:\n" + result.finalScreen;
-                        main.post(() -> askAi(goal, recoveryAttempt + 1, failure, token));
-                    } else {
-                        String message = result.failedAction.isEmpty()
-                                ? "I couldn't complete that task after a recovery attempt."
-                                : "I couldn't complete the task after a recovery attempt at: " + result.failedAction + ".";
-                        rememberAndReply(message);
-                        finishGoal(token);
-                    }
-                }
-
-                @Override public void onError(String message) {
-                    synchronized (NovaBrain.this) {
-                        if (shutdown || token != generation) return;
-                    }
-                    rememberAndReply("My AI core is unavailable right now. " + message);
-                    finishGoal(token);
-                }
+    public synchronized void think(String request){if(shutdown||request==null||request.trim().isEmpty())return;if(getEndpoint().isEmpty()){reply("My AI core isn't configured yet.");return;}if(queue.size()>=MAX_QUEUE){reply("My task queue is full. Cancel or finish a task before adding another.");return;}queue.offer(request.trim());status(processing?"BRAIN • GOAL QUEUED • "+queue.size():"BRAIN • GOAL ACCEPTED");processNextLocked();}
+    public synchronized void cancelAllGoals(){generation++;queue.clear();activeGoal="";processing=false;status("BRAIN • TASKS CANCELLED");}
+    public synchronized void cancelQueuedGoals(){cancelAllGoals();}public synchronized int queuedCount(){return queue.size();}public synchronized boolean isBusy(){return processing;}public synchronized String activeGoal(){return activeGoal;}
+    private void processNextLocked(){if(processing||shutdown)return;activeGoal=queue.poll();if(activeGoal==null)return;processing=true;memory.remember("user",activeGoal);final long token=generation;askAi(activeGoal,0,"",token,0);}
+    private void askAi(final String goal,final int recoveryAttempt,final String feedback,final long token,final int turn){synchronized(this){if(shutdown||token!=generation)return;}if(turn>=MAX_AGENT_TURNS){rememberAndReply("I stopped safely after reaching the agent reasoning limit.");finishGoal(token);return;}status(recoveryAttempt>0?"BRAIN • RECOVERING → REPLANNING":turn==0?"BRAIN • UNDERSTANDING → PLANNING":"BRAIN • OBSERVING → NEXT STEP");
+        try{JSONArray messages=new JSONArray();JSONObject system=new JSONObject().put("role","system").put("content",buildSystemPrompt(recoveryAttempt>0));messages.put(system);JSONObject ctx=new JSONObject().put("role","system");JSONArray facts=memory.searchFacts(goal,MAX_RELEVANT_FACTS);String screen=getUiSnapshot();StringBuilder c=new StringBuilder("Relevant saved NOVA memory:\n").append(facts).append("\n\nCurrent UI:\n").append(NovaAgentPolicy.bounded(screen,NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));if(!feedback.isEmpty())c.append("\n\nPrevious tool/execution feedback:\n").append(NovaAgentPolicy.bounded(feedback,NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));ctx.put("content",NovaAgentPolicy.bounded(c.toString(),NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));messages.put(ctx);
+            JSONArray history=memory.recent();int start=Math.max(0,history.length()-NovaAgentPolicy.MAX_CONTEXT_ITEMS);for(int i=start;i<history.length();i++){JSONObject item=history.optJSONObject(i);if(item!=null)messages.put(item);}final long started=System.currentTimeMillis();ai.chat(getEndpoint(),secureStore.getApiKey(),getModel(),messages,new NovaAiClient.Callback(){
+                public void onResult(final String text){agentExecutor.execute(()->{synchronized(NovaBrain.this){if(shutdown||token!=generation)return;}NovaAgentPlanner.ExecutionResult r=planner.executeDetailed(text);synchronized(NovaBrain.this){if(shutdown||token!=generation)return;}if(!r.planValid){if(recoveryAttempt<1)main.post(()->askAi(goal,recoveryAttempt+1,"Invalid plan: "+r.failedAction,token,turn+1));else{rememberAndReply("I couldn't produce a safe executable plan.");finishGoal(token);}return;}if(!r.toolResults.isEmpty()){String next=NovaAgentPolicy.bounded(r.toolResults,NovaAgentPolicy.MAX_TOOL_RESULT_CHARS);main.post(()->askAi(goal,0,next,token,turn+1));return;}if(r.completed){if(!r.say.isEmpty())rememberAndReply(r.say);finishGoal(token);return;}if(recoveryAttempt<1){String failure="Failed action: "+r.failedAction+"\nObserved screen after failure:\n"+r.finalScreen;main.post(()->askAi(goal,recoveryAttempt+1,failure,token,turn+1));}else{rememberAndReply(r.failedAction.isEmpty()?"I couldn't complete that task safely.":"I couldn't complete the task safely at: "+r.failedAction+".");finishGoal(token);}});}
+                public void onError(String message){synchronized(NovaBrain.this){if(shutdown||token!=generation)return;}rememberAndReply("My AI core is unavailable right now. "+message);finishGoal(token);}
             });
-        } catch (Exception e) {
-            synchronized (this) {
-                if (shutdown || token != generation) return;
-            }
-            Log.e(TAG, "AI REQUEST PREPARATION ERROR", e);
-            rememberAndReply("I couldn't prepare the AI request.");
-            finishGoal(token);
-        }
-    }
-
-    private String buildSystemPrompt(boolean recovery) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("You are NOVA, a careful general-purpose Android agent. ");
-        prompt.append("Understand the user's goal, choose available tools, and return JSON only. ");
-        prompt.append("Plan concrete steps, use observation when UI state matters, and never pretend an action succeeded. ");
-        prompt.append("Use at most ").append(NovaAgentPolicy.MAX_STEPS).append(" actions per plan. Do not invent tools or action types. ");
-        prompt.append("Allowed action schema: {\"say\":\"short natural response\",\"actions\":[{\"type\":\"tool type\",\"value\":\"optional value\"}]}.");
-        prompt.append("\nAvailable tools:\n").append(tools.promptSummary());
-        prompt.append("\nFor ambiguous UI tasks, read_screen before targeting an element. ");
-        prompt.append("Use click_index only when a numbered visible result is explicitly identified. ");
-        prompt.append("Never bypass Android permissions, authentication, security controls, or private data boundaries. ");
-        prompt.append("Prefer reversible actions and stop when required permission is unavailable.");
-        if (recovery) prompt.append("\nThis is a recovery attempt. Inspect the failure context and produce a different, safer plan; do not blindly repeat the failed action.");
-        return prompt.toString();
-    }
-
-    private void finishGoal(long token) {
-        synchronized (this) {
-            if (shutdown || token != generation) return;
-            processing = false;
-            activeGoal = "";
-            if (!queue.isEmpty()) {
-                status("BRAIN • NEXT GOAL");
-                processNextLocked();
-            } else {
-                status("BRAIN • IDLE");
-            }
-        }
-    }
-
-    private String getEndpoint() { return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ENDPOINT, "").trim(); }
-    private String getModel() { return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(MODEL, "gpt-4o-mini").trim(); }
-    private String getUiSnapshot() { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service == null ? "Accessibility service is not connected." : service.getUiSnapshot(); }
-
-    private void rememberAndReply(String text) {
-        if (text == null || text.trim().isEmpty()) return;
-        memory.remember("assistant", text.trim());
-        reply(text.trim());
-    }
-    private void status(String text) { if (listener != null && text != null) listener.onStatus(text); }
-    private void reply(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.onReply(text.trim()); }
-
-    public synchronized void shutdown() {
-        shutdown = true;
-        generation++;
-        queue.clear();
-        activeGoal = "";
-        processing = false;
-        main.removeCallbacksAndMessages(null);
-        ai.shutdown();
-    }
+        }catch(Exception e){Log.e(TAG,"AI REQUEST PREPARATION ERROR",e);rememberAndReply("I couldn't prepare the AI request.");finishGoal(token);} }
+    private String buildSystemPrompt(boolean recovery){StringBuilder p=new StringBuilder();p.append("You are NOVA, a careful general-purpose Android agent. Understand goals, use only catalogued tools, and return JSON only. Never claim an action succeeded without tool/execution evidence. Use at most ").append(NovaAgentPolicy.MAX_STEPS).append(" actions in a turn and at most ").append(MAX_AGENT_TURNS).append(" reasoning turns for one goal.\n");p.append("Schema: {\"say\":\"short final response\",\"actions\":[{\"type\":\"tool\",\"value\":\"value\"}]}. If more work is needed, do not pretend it is complete; make the next tool call. Web-dependent actions should be separate from the search/fetch turn so you can inspect the returned evidence.\n");p.append("Available tools:\n").append(tools.promptSummary());p.append("\nUse screen_observe/read_screen when UI state matters. Use memory_search for relevant saved facts. Use remember only for durable facts/preferences the user explicitly provides. Use parallel only for independent informational tools; never parallelize Android UI mutations. Prefer reversible actions and stop for unavailable permissions/authentication.");if(recovery)p.append("\nRecovery mode: diagnose the supplied failure and choose a meaningfully different safe approach; do not blindly repeat the failed action.");return p.toString();}
+    private String executeIntelligenceTool(String type,String value){try{if("web_search".equals(type))return ok(web.search(value,5));if("web_fetch".equals(type))return ok(web.fetch(value));if("web_research".equals(type))return ok(web.search(value,6));if("screen_observe".equals(type)){String s=getUiSnapshot();return "{\"ok\":true,\"text\":\""+jsonEscape(NovaAgentPolicy.bounded(s,NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))+"\"}";}if("read_screen".equals(type)){String s=getUiSnapshot();return "{\"ok\":true,\"text\":\""+jsonEscape(NovaAgentPolicy.bounded(s,NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))+"\"}";}if("memory_search".equals(type)){JSONArray r=memory.searchFacts(value,8);return "{\"ok\":true,\"facts\":"+r+"}";}if("remember".equals(type)){JSONObject o=new JSONObject(value);String key=o.optString("key","").trim(),v=o.optString("value","").trim();if(key.isEmpty()||v.isEmpty())return "{\"ok\":false,\"error\":\"key_and_value_required\"}";memory.rememberFact(key,v);return "{\"ok\":true,\"saved\":true}";}return "{\"ok\":false,\"error\":\"unknown_intelligence_tool\"}";}catch(Exception e){return "{\"ok\":false,\"error\":\""+jsonEscape(e.getMessage()==null?"tool_failed":e.getMessage())+"\"}";}}
+    private String executeParallelTools(String value){try{JSONArray steps=new JSONArray(value);for(int i=0;i<steps.length();i++){JSONObject s=steps.optJSONObject(i);if(s==null||!isInformational(s.optString("type","")))return "{\"ok\":false,\"error\":\"parallel_only_allows_informational_tools\"}";}JSONArray out=orchestrator.executeParallel(toOrchestratorSteps(steps), (tool,input)->executeToolJson(tool,input));return "{\"ok\":true,\"parallel_results\":"+out+"}";}catch(Exception e){return "{\"ok\":false,\"error\":\"parallel_failed\"}";}}
+    private JSONArray toOrchestratorSteps(JSONArray source)throws Exception{JSONArray out=new JSONArray();for(int i=0;i<source.length();i++){JSONObject s=source.optJSONObject(i);if(s!=null)out.put(new JSONObject().put("id",s.optString("id",String.valueOf(i))).put("tool",s.optString("type","")).put("input",new JSONObject().put("value",s.optString("value",""))));}return out;}
+    private JSONObject executeToolJson(String tool,JSONObject input){try{String value=input==null?"":input.optString("value","");return new JSONObject(executeIntelligenceTool(tool,value));}catch(Exception e){try{return new JSONObject().put("ok",false).put("error","tool_failed");}catch(Exception ignored){return new JSONObject();}}}
+    private boolean isInformational(String t){return "web_search".equals(t)||"web_fetch".equals(t)||"web_research".equals(t)||"screen_observe".equals(t)||"memory_search".equals(t);}
+    private String ok(String payload){try{JSONObject o=new JSONObject(payload);o.put("ok",true);return o.toString();}catch(Exception e){return "{\"ok\":true,\"data\":\""+jsonEscape(payload)+"\"}";}}
+    private String jsonEscape(String s){return s==null?"":s.replace("\\","\\\\").replace("\"","\\\"").replace("\r"," ").replace("\n"," ");}
+    private void finishGoal(long token){synchronized(this){if(shutdown||token!=generation)return;processing=false;activeGoal="";if(!queue.isEmpty()){status("BRAIN • NEXT GOAL");processNextLocked();}else status("BRAIN • IDLE");}}
+    private String getEndpoint(){return context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString(ENDPOINT,"").trim();}private String getModel(){return context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString(MODEL,"gpt-4o-mini").trim();}private String getUiSnapshot(){GestureAccessibilityService s=GestureAccessibilityService.getInstance();return s==null?"Accessibility service is not connected.":s.getUiSnapshot();}
+    private void rememberAndReply(String text){if(text==null||text.trim().isEmpty())return;memory.remember("assistant",text.trim());reply(text.trim());}private void status(String text){if(listener!=null&&text!=null)listener.onStatus(text);}private void reply(String text){if(listener!=null&&text!=null&&!text.trim().isEmpty())listener.onReply(text.trim());}
+    public synchronized void shutdown(){shutdown=true;generation++;queue.clear();activeGoal="";processing=false;main.removeCallbacksAndMessages(null);agentExecutor.shutdownNow();orchestrator.shutdown();ai.shutdown();}
 }
