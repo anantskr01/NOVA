@@ -99,8 +99,8 @@ public final class NovaAssistant {
 
             if (containsAny(c, "stop nova", "stop listening", "be quiet", "stop speaking")) {
                 if (tts != null) tts.stop();
-                brain.cancelQueuedGoals();
-                say("Okay.");
+                brain.cancelAllGoals();
+                say("Okay. I stopped NOVA's active and queued tasks.");
                 return;
             }
             if (containsAny(c, "go home", "home screen", "take me home")) { executeLocal("home", "Going home."); return; }
@@ -161,7 +161,7 @@ public final class NovaAssistant {
         if (c.equals("forget everything") || c.equals("clear memory") || c.equals("delete my memory")) {
             memory.clear();
             context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().clear().apply();
-            brain.cancelQueuedGoals();
+            brain.cancelAllGoals();
             say("Local NOVA memory has been cleared.");
             return true;
         }
