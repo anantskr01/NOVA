@@ -13,16 +13,16 @@ import java.util.Deque;
 
 /**
  * Central NOVA reasoning layer. Owns open-ended goals and coordinates
- * context -> model -> plan -> execution -> verification -> one recovery/re-plan.
+ * context -> model -> plan -> execution -> verification -> bounded recovery.
  */
 public final class NovaBrain {
     private static final String TAG = "NovaBrain";
     private static final String PREFS = "nova_ai_settings";
     private static final String ENDPOINT = "endpoint";
     private static final String MODEL = "model";
-    private static final int MAX_HISTORY = 14;
     private static final int MAX_QUEUE = 6;
     private static final int MAX_RECOVERY_ATTEMPTS = 1;
+    private static final int MAX_RELEVANT_FACTS = 8;
 
     public interface Listener {
         void onStatus(String text);
@@ -74,7 +74,6 @@ public final class NovaBrain {
         }, tools);
     }
 
-    /** Queue an open-ended goal. Android UI actions remain serialized for safety. */
     public synchronized void think(String request) {
         if (shutdown || request == null || request.trim().isEmpty()) return;
         if (getEndpoint().isEmpty()) {
@@ -90,7 +89,6 @@ public final class NovaBrain {
         processNextLocked();
     }
 
-    /** Cancel queued and in-flight NOVA work. In-flight callbacks become stale and cannot execute a plan. */
     public synchronized void cancelAllGoals() {
         generation++;
         queue.clear();
@@ -99,9 +97,7 @@ public final class NovaBrain {
         status("BRAIN • TASKS CANCELLED");
     }
 
-    /** Backward-compatible queue cancellation entry point. */
     public synchronized void cancelQueuedGoals() { cancelAllGoals(); }
-
     public synchronized int queuedCount() { return queue.size(); }
     public synchronized boolean isBusy() { return processing; }
     public synchronized String activeGoal() { return activeGoal; }
@@ -132,13 +128,14 @@ public final class NovaBrain {
             JSONObject contextMessage = new JSONObject();
             contextMessage.put("role", "system");
             String screen = getUiSnapshot();
-            contextMessage.put("content", "Saved NOVA memory:\n" + memory.factsSummary()
-                    + "\n\nCurrent UI:\n" + screen
-                    + (failureContext.isEmpty() ? "" : "\n\nPrevious attempt failure:\n" + failureContext));
+            JSONArray relevantFacts = memory.searchFacts(goal, MAX_RELEVANT_FACTS);
+            contextMessage.put("content", "Relevant saved NOVA memory:\n" + relevantFacts.toString()
+                    + "\n\nCurrent UI:\n" + NovaAgentPolicy.bounded(screen, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)
+                    + (failureContext.isEmpty() ? "" : "\n\nPrevious attempt failure:\n" + NovaAgentPolicy.bounded(failureContext, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)));
             messages.put(contextMessage);
 
             JSONArray history = memory.recent();
-            int start = Math.max(0, history.length() - MAX_HISTORY);
+            int start = Math.max(0, history.length() - NovaAgentPolicy.MAX_CONTEXT_ITEMS);
             for (int i = start; i < history.length(); i++) {
                 JSONObject item = history.optJSONObject(i);
                 if (item != null) messages.put(item);
@@ -158,7 +155,6 @@ public final class NovaBrain {
                         finishGoal(token);
                         return;
                     }
-
                     if (recoveryAttempt < MAX_RECOVERY_ATTEMPTS) {
                         String failure = "Failed action: " + result.failedAction
                                 + "\nObserved screen after failure:\n" + result.finalScreen;
@@ -195,7 +191,7 @@ public final class NovaBrain {
         prompt.append("You are NOVA, a careful general-purpose Android agent. ");
         prompt.append("Understand the user's goal, choose available tools, and return JSON only. ");
         prompt.append("Plan concrete steps, use observation when UI state matters, and never pretend an action succeeded. ");
-        prompt.append("Use at most 8 actions per plan. Do not invent tools or action types. ");
+        prompt.append("Use at most ").append(NovaAgentPolicy.MAX_STEPS).append(" actions per plan. Do not invent tools or action types. ");
         prompt.append("Allowed action schema: {\"say\":\"short natural response\",\"actions\":[{\"type\":\"tool type\",\"value\":\"optional value\"}]}.");
         prompt.append("\nAvailable tools:\n").append(tools.promptSummary());
         prompt.append("\nFor ambiguous UI tasks, read_screen before targeting an element. ");
@@ -220,32 +216,17 @@ public final class NovaBrain {
         }
     }
 
-    private String getEndpoint() {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ENDPOINT, "").trim();
-    }
-
-    private String getModel() {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(MODEL, "gpt-4o-mini").trim();
-    }
-
-    private String getUiSnapshot() {
-        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-        return service == null ? "Accessibility service is not connected." : service.getUiSnapshot();
-    }
+    private String getEndpoint() { return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ENDPOINT, "").trim(); }
+    private String getModel() { return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(MODEL, "gpt-4o-mini").trim(); }
+    private String getUiSnapshot() { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service == null ? "Accessibility service is not connected." : service.getUiSnapshot(); }
 
     private void rememberAndReply(String text) {
         if (text == null || text.trim().isEmpty()) return;
         memory.remember("assistant", text.trim());
         reply(text.trim());
     }
-
-    private void status(String text) {
-        if (listener != null && text != null) listener.onStatus(text);
-    }
-
-    private void reply(String text) {
-        if (listener != null && text != null && !text.trim().isEmpty()) listener.onReply(text.trim());
-    }
+    private void status(String text) { if (listener != null && text != null) listener.onStatus(text); }
+    private void reply(String text) { if (listener != null && text != null && !text.trim().isEmpty()) listener.onReply(text.trim()); }
 
     public synchronized void shutdown() {
         shutdown = true;
