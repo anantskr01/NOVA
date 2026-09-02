@@ -1,0 +1,103 @@
+package com.aircontrol;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Bounded orchestration primitives for NOVA. Android UI actions should remain
+ * serialized; parallel execution is reserved for genuinely independent tools.
+ */
+public final class NovaTaskOrchestrator {
+    public interface StepExecutor { JSONObject execute(String tool, JSONObject input); }
+
+    private final ExecutorService parallelPool = Executors.newFixedThreadPool(4);
+
+    public JSONObject execute(JSONArray steps, StepExecutor executor) {
+        JSONObject result = new JSONObject();
+        JSONArray results = new JSONArray();
+        long started = System.currentTimeMillis();
+        int completed = 0;
+        try {
+            if (steps == null || executor == null) return result.put("ok", false).put("error", "invalid_orchestrator_input");
+            for (int i = 0; i < steps.length() && completed < NovaAgentPolicy.MAX_STEPS; i++) {
+                if (NovaAgentPolicy.taskExpired(started)) return result.put("ok", false).put("error", "task_timeout").put("results", results);
+                JSONObject step = steps.optJSONObject(i);
+                if (step == null) continue;
+                String tool = step.optString("tool", "").trim();
+                if (tool.isEmpty()) {
+                    results.put(new JSONObject().put("ok", false).put("error", "missing_tool").put("step", i));
+                    continue;
+                }
+                JSONObject output = executor.execute(tool, step.optJSONObject("input"));
+                if (output == null) output = new JSONObject().put("ok", false).put("error", "null_tool_result");
+                results.put(new JSONObject().put("step", i).put("tool", tool)
+                        .put("result", NovaAgentPolicy.bounded(output.toString(), NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)));
+                completed++;
+                if (!output.optBoolean("ok", false) && step.optBoolean("stopOnError", true)) {
+                    return result.put("ok", false).put("error", "step_failed").put("results", results).put("completed", completed);
+                }
+            }
+            boolean limited = steps.length() > NovaAgentPolicy.MAX_STEPS;
+            return result.put("ok", !limited)
+                    .put("status", limited ? "step_limit_reached" : "complete")
+                    .put("results", results).put("completed", completed);
+        } catch (Exception e) {
+            try { return result.put("ok", false).put("error", "orchestration_error")
+                    .put("message", String.valueOf(e.getMessage())).put("results", results); }
+            catch (Exception ignored) { return result; }
+        }
+    }
+
+    public JSONArray executeParallel(JSONArray steps, StepExecutor executor) {
+        JSONArray results = new JSONArray();
+        if (steps == null || executor == null || steps.length() == 0) return results;
+        final int count = Math.min(steps.length(), NovaAgentPolicy.MAX_STEPS);
+        final JSONObject[] slots = new JSONObject[count];
+        final CountDownLatch latch = new CountDownLatch(count);
+        for (int i = 0; i < count; i++) {
+            final int index = i;
+            final JSONObject step = steps.optJSONObject(i);
+            parallelPool.execute(() -> {
+                try {
+                    if (step == null) {
+                        slots[index] = new JSONObject().put("ok", false).put("error", "invalid_step");
+                        return;
+                    }
+                    String tool = step.optString("tool", "").trim();
+                    JSONObject output = tool.isEmpty()
+                            ? new JSONObject().put("ok", false).put("error", "missing_tool")
+                            : executor.execute(tool, step.optJSONObject("input"));
+                    if (output == null) output = new JSONObject().put("ok", false).put("error", "null_tool_result");
+                    slots[index] = new JSONObject().put("id", step.optString("id", ""))
+                            .put("step", index).put("tool", tool).put("result", output);
+                } catch (Exception e) {
+                    try { slots[index] = new JSONObject().put("id", step == null ? "" : step.optString("id", ""))
+                            .put("step", index).put("tool", step == null ? "" : step.optString("tool", ""))
+                            .put("result", new JSONObject().put("ok", false).put("error", "task_exception")); }
+                    catch (Exception ignored) { }
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+        try { latch.await(NovaAgentPolicy.MAX_TASK_MILLIS, TimeUnit.MILLISECONDS); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        for (int i = 0; i < count; i++) {
+            if (slots[i] != null) results.put(slots[i]);
+            else {
+                try { results.put(new JSONObject().put("id", steps.optJSONObject(i) == null ? "" : steps.optJSONObject(i).optString("id", ""))
+                        .put("step", i).put("tool", steps.optJSONObject(i) == null ? "" : steps.optJSONObject(i).optString("tool", ""))
+                        .put("result", new JSONObject().put("ok", false).put("error", "task_timeout"))); }
+                catch (Exception ignored) { }
+            }
+        }
+        return results;
+    }
+
+    public void shutdown() { parallelPool.shutdownNow(); }
+}
