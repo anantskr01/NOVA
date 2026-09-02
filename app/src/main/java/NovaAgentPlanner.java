@@ -71,7 +71,15 @@ public final class NovaAgentPlanner {
                 return new ExecutionResult(true, true, 0, "", normalizeScreen(executor.readScreen()), say);
             }
 
-            int count = Math.min(actions.length(), NovaAgentPolicy.MAX_STEPS);
+            // Never silently execute only the first N steps of an over-limit plan.
+            // The model must receive a bounded plan; silently truncating it can make
+            // NOVA report success while the user's full goal was not attempted.
+            if (actions.length() > NovaAgentPolicy.MAX_STEPS) {
+                listener.status("AGENT • PLAN REJECTED • STEP LIMIT");
+                return new ExecutionResult(false, false, 1, "step_limit_exceeded", normalizeScreen(executor.readScreen()), "");
+            }
+
+            int count = actions.length();
             listener.status("AGENT • OBSERVE → PLAN → ACT → VERIFY");
             List<String> failures = new ArrayList<>();
             String previousScreen = normalizeScreen(executor.readScreen());
