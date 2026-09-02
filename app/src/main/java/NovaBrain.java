@@ -41,6 +41,7 @@ public final class NovaBrain {
     private final Deque<String> queue = new ArrayDeque<>();
     private boolean processing;
     private boolean shutdown;
+    private long generation;
     private String activeGoal = "";
 
     public NovaBrain(Context context, NovaActionEngine actions, NovaMemory memory, Listener listener) {
@@ -68,12 +69,12 @@ public final class NovaBrain {
                 return service != null && service.clickVisibleIndex(index);
             }
         }, new NovaAgentPlanner.Listener() {
-            @Override public void status(String text) { status(text); }
-            @Override public void reply(String text) { reply(text); }
+            @Override public void status(String text) { NovaBrain.this.status(text); }
+            @Override public void reply(String text) { NovaBrain.this.reply(text); }
         }, tools);
     }
 
-    /** Queue an open-ended goal. Goals execute one at a time so Android UI actions stay serialized. */
+    /** Queue an open-ended goal. Android UI actions remain serialized for safety. */
     public synchronized void think(String request) {
         if (shutdown || request == null || request.trim().isEmpty()) return;
         if (getEndpoint().isEmpty()) {
@@ -89,11 +90,17 @@ public final class NovaBrain {
         processNextLocked();
     }
 
-    /** Cancel queued goals. The currently executing Android action is allowed to finish safely. */
-    public synchronized void cancelQueuedGoals() {
+    /** Cancel queued and in-flight NOVA work. In-flight callbacks become stale and cannot execute a plan. */
+    public synchronized void cancelAllGoals() {
+        generation++;
         queue.clear();
-        status("BRAIN • QUEUE CLEARED");
+        activeGoal = "";
+        processing = false;
+        status("BRAIN • TASKS CANCELLED");
     }
+
+    /** Backward-compatible queue cancellation entry point. */
+    public synchronized void cancelQueuedGoals() { cancelAllGoals(); }
 
     public synchronized int queuedCount() { return queue.size(); }
     public synchronized boolean isBusy() { return processing; }
@@ -105,10 +112,14 @@ public final class NovaBrain {
         if (activeGoal == null) return;
         processing = true;
         memory.remember("user", activeGoal);
-        askAi(activeGoal, 0, "");
+        final long token = generation;
+        askAi(activeGoal, 0, "", token);
     }
 
-    private void askAi(final String goal, final int recoveryAttempt, final String failureContext) {
+    private void askAi(final String goal, final int recoveryAttempt, final String failureContext, final long token) {
+        synchronized (this) {
+            if (shutdown || token != generation) return;
+        }
         status(recoveryAttempt == 0 ? "BRAIN • UNDERSTANDING → PLANNING" : "BRAIN • RECOVERING → REPLANNING");
         try {
             JSONArray messages = new JSONArray();
@@ -135,35 +146,47 @@ public final class NovaBrain {
 
             ai.chat(getEndpoint(), secureStore.getApiKey(), getModel(), messages, new NovaAiClient.Callback() {
                 @Override public void onResult(String text) {
+                    synchronized (NovaBrain.this) {
+                        if (shutdown || token != generation) return;
+                    }
                     NovaAgentPlanner.ExecutionResult result = planner.executeDetailed(text);
+                    synchronized (NovaBrain.this) {
+                        if (shutdown || token != generation) return;
+                    }
                     if (result.completed) {
                         if (!result.say.isEmpty()) rememberAndReply(result.say);
-                        finishGoal();
+                        finishGoal(token);
                         return;
                     }
 
                     if (recoveryAttempt < MAX_RECOVERY_ATTEMPTS) {
                         String failure = "Failed action: " + result.failedAction
                                 + "\nObserved screen after failure:\n" + result.finalScreen;
-                        main.post(() -> askAi(goal, recoveryAttempt + 1, failure));
+                        main.post(() -> askAi(goal, recoveryAttempt + 1, failure, token));
                     } else {
                         String message = result.failedAction.isEmpty()
                                 ? "I couldn't complete that task after a recovery attempt."
                                 : "I couldn't complete the task after a recovery attempt at: " + result.failedAction + ".";
                         rememberAndReply(message);
-                        finishGoal();
+                        finishGoal(token);
                     }
                 }
 
                 @Override public void onError(String message) {
+                    synchronized (NovaBrain.this) {
+                        if (shutdown || token != generation) return;
+                    }
                     rememberAndReply("My AI core is unavailable right now. " + message);
-                    finishGoal();
+                    finishGoal(token);
                 }
             });
         } catch (Exception e) {
+            synchronized (this) {
+                if (shutdown || token != generation) return;
+            }
             Log.e(TAG, "AI REQUEST PREPARATION ERROR", e);
             rememberAndReply("I couldn't prepare the AI request.");
-            finishGoal();
+            finishGoal(token);
         }
     }
 
@@ -183,8 +206,9 @@ public final class NovaBrain {
         return prompt.toString();
     }
 
-    private void finishGoal() {
+    private void finishGoal(long token) {
         synchronized (this) {
+            if (shutdown || token != generation) return;
             processing = false;
             activeGoal = "";
             if (!queue.isEmpty()) {
@@ -225,7 +249,10 @@ public final class NovaBrain {
 
     public synchronized void shutdown() {
         shutdown = true;
+        generation++;
         queue.clear();
+        activeGoal = "";
+        processing = false;
         main.removeCallbacksAndMessages(null);
         ai.shutdown();
     }
