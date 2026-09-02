@@ -146,7 +146,7 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
         }
 
         if (handsFree) {
-            stopService(new Intent(this, NovaVoiceService.class));
+            stopService(new Intent(this, NovaReliableVoiceService.class));
             handsFree = false;
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putBoolean(PREF_ALWAYS_LISTENING, false).apply();
@@ -154,7 +154,7 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
             assistantStatusText.setText("VOICE • STANDBY");
             hudView.setState("ONLINE");
         } else {
-            Intent start = new Intent(this, NovaVoiceService.class);
+            Intent start = new Intent(this, NovaReliableVoiceService.class);
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(start);
                 else startService(start);
