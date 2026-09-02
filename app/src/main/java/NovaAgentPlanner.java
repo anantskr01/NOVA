@@ -13,8 +13,8 @@ import java.util.Set;
 
 /**
  * Bounded autonomous planner for NOVA.
- * Executes an AI plan as an observe -> act -> verify loop, with bounded retries
- * and safe recovery. Android permissions remain the authority for all actions.
+ * Executes an AI plan as an observe -> act -> verify loop and reports
+ * enough structured state for the Brain to perform one bounded re-plan.
  */
 public final class NovaAgentPlanner {
     private static final String TAG = "NovaAgentPlanner";
@@ -23,6 +23,25 @@ public final class NovaAgentPlanner {
     private static final long VERIFY_DELAY_MS = 450L;
     private static final long RETRY_DELAY_MS = 350L;
     private static final int MAX_SCREEN_CHARS = 5000;
+
+    public static final class ExecutionResult {
+        public final boolean planValid;
+        public final boolean completed;
+        public final int failedSteps;
+        public final String failedAction;
+        public final String finalScreen;
+        public final String say;
+
+        ExecutionResult(boolean planValid, boolean completed, int failedSteps,
+                        String failedAction, String finalScreen, String say) {
+            this.planValid = planValid;
+            this.completed = completed;
+            this.failedSteps = failedSteps;
+            this.failedAction = failedAction == null ? "" : failedAction;
+            this.finalScreen = finalScreen == null ? "" : finalScreen;
+            this.say = say == null ? "" : say;
+        }
+    }
 
     private static final Set<String> ALLOWED = new HashSet<>();
     static {
@@ -47,40 +66,53 @@ public final class NovaAgentPlanner {
 
     private final ActionExecutor executor;
     private final Listener listener;
+    private final NovaToolRegistry tools;
 
     public NovaAgentPlanner(ActionExecutor executor, Listener listener) {
+        this(executor, listener, new NovaToolRegistry());
+    }
+
+    public NovaAgentPlanner(ActionExecutor executor, Listener listener, NovaToolRegistry tools) {
         this.executor = executor;
         this.listener = listener;
+        this.tools = tools == null ? new NovaToolRegistry() : tools;
     }
 
     public boolean execute(String rawPlan) {
+        return executeDetailed(rawPlan).completed;
+    }
+
+    public ExecutionResult executeDetailed(String rawPlan) {
         try {
             JSONObject plan = parseObject(rawPlan);
             if (plan == null) {
                 listener.status("AGENT • INVALID PLAN");
-                return false;
+                return new ExecutionResult(false, false, 1, "invalid_plan", "", "");
             }
 
             String say = plan.optString("say", "").trim();
             JSONArray actions = plan.optJSONArray("actions");
             if (actions == null) {
                 if (!say.isEmpty()) listener.reply(say);
-                return true;
+                return new ExecutionResult(true, true, 0, "", normalizeScreen(executor.readScreen()), say);
             }
 
             int count = Math.min(actions.length(), MAX_STEPS);
             listener.status("AGENT • OBSERVE → PLAN → ACT → VERIFY");
             List<String> failures = new ArrayList<>();
-
             String previousScreen = normalizeScreen(executor.readScreen());
+
             for (int i = 0; i < count; i++) {
                 JSONObject action = actions.optJSONObject(i);
-                if (action == null) continue;
+                if (action == null) {
+                    failures.add("malformed_step_" + (i + 1));
+                    continue;
+                }
 
                 String type = action.optString("type", "none").trim().toLowerCase();
                 String value = action.optString("value", "").trim();
-                if (!ALLOWED.contains(type)) {
-                    listener.status("AGENT • BLOCKED UNKNOWN ACTION");
+                if (!tools.contains(type) || !ALLOWED.contains(type)) {
+                    listener.status("AGENT • BLOCKED UNKNOWN ACTION • " + type);
                     failures.add(type);
                     continue;
                 }
@@ -101,7 +133,7 @@ public final class NovaAgentPlanner {
                 if (!ok) {
                     failures.add(type);
                     listener.status("AGENT • RECOVERY NEEDED • " + type);
-                    continue;
+                    break;
                 }
 
                 if (needsVerification(type)) {
@@ -112,15 +144,15 @@ public final class NovaAgentPlanner {
                         previousScreen = after.isEmpty() ? previousScreen : after;
                     } else {
                         listener.status("AGENT • VERIFY • UNCERTAIN");
-                        // One verification retry only; do not loop indefinitely.
                         SystemClock.sleep(RETRY_DELAY_MS);
                         String retryScreen = normalizeScreen(executor.readScreen());
                         if (!isMeaningfulChange(type, value, previousScreen, retryScreen)) {
+                            failures.add(type + "_verification");
                             listener.status("AGENT • RECOVERY • STEP NOT CONFIRMED");
-                        } else {
-                            previousScreen = retryScreen;
-                            listener.status("AGENT • VERIFY • PASS AFTER WAIT");
+                            break;
                         }
+                        previousScreen = retryScreen;
+                        listener.status("AGENT • VERIFY • PASS AFTER WAIT");
                     }
                 }
             }
@@ -129,17 +161,18 @@ public final class NovaAgentPlanner {
             if (!finalScreen.isEmpty()) listener.status("AGENT • FINAL OBSERVE • READY");
 
             if (!failures.isEmpty()) {
-                listener.status("AGENT • " + failures.size() + " STEP(S) NEED ATTENTION");
+                listener.status("AGENT • RECOVERY REQUIRED • " + failures.get(0));
             } else {
                 listener.status("AGENT • TASK VERIFIED");
             }
 
-            if (!say.isEmpty()) listener.reply(say);
-            return true;
+            if (failures.isEmpty() && !say.isEmpty()) listener.reply(say);
+            return new ExecutionResult(true, failures.isEmpty(), failures.size(),
+                    failures.isEmpty() ? "" : failures.get(0), finalScreen, say);
         } catch (Exception e) {
             Log.e(TAG, "PLAN EXECUTION ERROR", e);
             listener.status("AGENT • SAFE STOP");
-            return false;
+            return new ExecutionResult(false, false, 1, "planner_exception", "", "");
         }
     }
 
@@ -169,7 +202,9 @@ public final class NovaAgentPlanner {
     }
 
     private boolean shouldRetry(String type) {
-        return !"read_screen".equals(type) && !"wait".equals(type);
+        return MAX_RETRIES > 0 && ("click_text".equals(type) || "click_index".equals(type)
+                || "open_app".equals(type) || "open_package".equals(type)
+                || "open_url".equals(type) || "search".equals(type));
     }
 
     private boolean needsVerification(String type) {
