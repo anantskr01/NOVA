@@ -1,36 +1,17 @@
 package com.aircontrol;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
-/** Central registry describing the capabilities available to NOVA's agent. */
-public final class NovaToolRegistry {
-    private final Map<String, NovaTool> tools = new LinkedHashMap<>();
-    public NovaToolRegistry() {
-        register(new BasicTool("home","Return to the Android home screen",true));
-        register(new BasicTool("back","Navigate back",true)); register(new BasicTool("recents","Open recent apps",true));
-        register(new BasicTool("notifications","Open the notification shade",true)); register(new BasicTool("quick_settings","Open quick settings",true));
-        register(new BasicTool("scroll_up","Scroll the current UI upward",true)); register(new BasicTool("scroll_down","Scroll the current UI downward",true));
-        register(new BasicTool("swipe_left","Swipe the current UI left",true)); register(new BasicTool("swipe_right","Swipe the current UI right",true));
-        register(new BasicTool("open_url","Open a web URL",true)); register(new BasicTool("open_package","Launch an installed Android package",true));
-        register(new BasicTool("open_app","Launch an installed app by name",true)); register(new BasicTool("click_text","Activate visible UI text",true));
-        register(new BasicTool("click_index","Activate a numbered visible UI item",true)); register(new BasicTool("search","Open a web search",true));
-        register(new BasicTool("read_screen","Read visible screen text",true)); register(new BasicTool("screen_observe","Observe current screen state",true));
-        register(new BasicTool("web_search","Search the public web and return structured results",true));
-        register(new BasicTool("web_fetch","Fetch a public page and return bounded readable text",true));
-        register(new BasicTool("web_research","Search, inspect results and return a bounded research packet",true));
-        register(new BasicTool("memory_search","Search NOVA's saved facts for relevant context",true));
-        register(new BasicTool("remember","Save a durable user fact when explicitly requested",true));
-        register(new BasicTool("settings","Open Android settings",true)); register(new BasicTool("wait","Wait for a bounded amount of time",true));
-        register(new BasicTool("none","Do nothing",true));
-    }
-    public synchronized void register(NovaTool tool){if(tool==null||tool.type()==null||tool.type().trim().isEmpty())return;tools.put(tool.type().trim().toLowerCase(),tool);}
-    public synchronized boolean contains(String type){return type!=null&&tools.containsKey(type.trim().toLowerCase());}
-    public synchronized NovaTool get(String type){return type==null?null:tools.get(type.trim().toLowerCase());}
-    public synchronized List<NovaTool> all(){return Collections.unmodifiableList(new ArrayList<>(tools.values()));}
-    public synchronized String promptSummary(){StringBuilder out=new StringBuilder();for(NovaTool tool:tools.values()){if(out.length()>7000)break;out.append("- ").append(tool.type()).append(": ").append(tool.description()).append("; reversible=").append(tool.reversible()).append('\n');}return out.toString().trim();}
-    private static final class BasicTool implements NovaTool{private final String type,description;private final boolean reversible;BasicTool(String t,String d,boolean r){type=t;description=d;reversible=r;}public String type(){return type;}public String description(){return description;}public boolean reversible(){return reversible;}}
+import java.util.ArrayList;import java.util.Collections;import java.util.LinkedHashMap;import java.util.List;import java.util.Map;
+/** Central registry describing NOVA's executable agent capabilities. */
+public final class NovaToolRegistry{
+ private final Map<String,NovaTool> tools=new LinkedHashMap<>();
+ public NovaToolRegistry(){
+  add("home","Return to Android home",true);add("back","Navigate back",true);add("recents","Open recent apps",true);add("notifications","Open notification shade",true);add("quick_settings","Open quick settings",true);add("scroll_up","Scroll upward",true);add("scroll_down","Scroll downward",true);add("swipe_left","Swipe left",true);add("swipe_right","Swipe right",true);add("open_url","Open an HTTP/HTTPS URL",true);add("open_package","Launch an installed package",true);add("open_app","Launch an installed app by name",true);add("click_text","Activate visible UI text",true);add("click_index","Activate a numbered visible UI item",true);add("search","Open a web search",true);add("read_screen","Read visible screen text",true);add("screen_observe","Observe current Android UI state",true);add("web_search","Search the public web and return structured results",true);add("web_fetch","Fetch a public page and return bounded text",true);add("web_research","Start a bounded public-web research pass",true);add("memory_search","Search saved NOVA facts",true);add("remember","Save a durable fact explicitly provided by the user",true);add("parallel","Run independent informational tools concurrently",true);add("settings","Open Android settings",true);add("wait","Wait for a bounded duration",true);add("none","Do nothing",true);
+ }
+ private void add(String type,String description,boolean reversible){register(new BasicTool(type,description,reversible));}
+ public synchronized void register(NovaTool tool){if(tool==null||tool.type()==null||tool.type().trim().isEmpty())return;tools.put(tool.type().trim().toLowerCase(),tool);}
+ public synchronized boolean contains(String type){return type!=null&&tools.containsKey(type.trim().toLowerCase());}
+ public synchronized NovaTool get(String type){return type==null?null:tools.get(type.trim().toLowerCase());}
+ public synchronized List<NovaTool> all(){return Collections.unmodifiableList(new ArrayList<>(tools.values()));}
+ public synchronized String promptSummary(){StringBuilder out=new StringBuilder();for(NovaTool t:tools.values()){if(out.length()>7000)break;out.append("- ").append(t.type()).append(": ").append(t.description()).append("; reversible=").append(t.reversible()).append('\n');}return out.toString().trim();}
+ private static final class BasicTool implements NovaTool{private final String type,description;private final boolean reversible;BasicTool(String t,String d,boolean r){type=t;description=d;reversible=r;}public String type(){return type;}public String description(){return description;}public boolean reversible(){return reversible;}}
 }
