@@ -25,8 +25,9 @@ public final class NovaActionEngine {
     }
 
     public boolean execute(String type, String value) {
+        String action = type == null ? "none" : type.trim().toLowerCase();
         try {
-            switch (type == null ? "none" : type.trim().toLowerCase()) {
+            switch (action) {
                 case "home": return global(AccessibilityService.GLOBAL_ACTION_HOME);
                 case "back": return global(AccessibilityService.GLOBAL_ACTION_BACK);
                 case "recents": return global(AccessibilityService.GLOBAL_ACTION_RECENTS);
@@ -42,15 +43,15 @@ public final class NovaActionEngine {
                     catch (NumberFormatException ignored) { delay = 500L; }
                     SystemClock.sleep(Math.max(100L, Math.min(delay, 2500L)));
                     return true;
+                case "type_text":
+                    return typeText(value);
+                case "press_enter":
+                    return pressEnter();
                 case "search":
                     if (value == null || value.trim().isEmpty()) return false;
-                    launch(new Intent(Intent.ACTION_VIEW,
-                            Uri.parse("https://www.google.com/search?q=" + Uri.encode(value.trim()))));
-                    return true;
+                    return openWebUrl("https://www.google.com/search?q=" + Uri.encode(value.trim()));
                 case "open_url":
-                    if (value == null || value.trim().isEmpty()) return false;
-                    launch(new Intent(Intent.ACTION_VIEW, Uri.parse(value.trim())));
-                    return true;
+                    return openWebUrl(value);
                 case "open_package":
                     if (value == null || value.trim().isEmpty()) return false;
                     Intent pkg = context.getPackageManager().getLaunchIntentForPackage(value.trim());
@@ -58,9 +59,8 @@ public final class NovaActionEngine {
                     launch(pkg);
                     return true;
                 case "open_app":
-                    NovaAppCatalog catalog = apps;
-                    android.content.pm.ResolveInfo info = catalog.resolve(value);
-                    Intent appIntent = catalog.launchIntent(info);
+                    android.content.pm.ResolveInfo info = apps.resolve(value);
+                    Intent appIntent = apps.launchIntent(info);
                     if (appIntent == null) return false;
                     launch(appIntent);
                     return true;
@@ -72,15 +72,33 @@ public final class NovaActionEngine {
                     return false;
             }
         } catch (Exception e) {
-            callback.status("ACTION FAILED • " + (type == null ? "UNKNOWN" : type));
+            if (callback != null) callback.status("ACTION FAILED • " + action);
             return false;
         }
+    }
+
+    private boolean typeText(String value) {
+        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+        if (service == null) {
+            if (callback != null) callback.status("ACCESSIBILITY NOT CONNECTED");
+            return false;
+        }
+        return service.typeText(value == null ? "" : value);
+    }
+
+    private boolean pressEnter() {
+        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+        if (service == null) {
+            if (callback != null) callback.status("ACCESSIBILITY NOT CONNECTED");
+            return false;
+        }
+        return service.pressEnter();
     }
 
     public boolean global(int action) {
         GestureAccessibilityService service = GestureAccessibilityService.getInstance();
         if (service == null) {
-            callback.status("ACCESSIBILITY NOT CONNECTED");
+            if (callback != null) callback.status("ACCESSIBILITY NOT CONNECTED");
             return false;
         }
         return service.performGlobalActionPublic(action);
@@ -89,13 +107,31 @@ public final class NovaActionEngine {
     private boolean swipe(String direction) {
         GestureAccessibilityService service = GestureAccessibilityService.getInstance();
         if (service == null) {
-            callback.status("ACCESSIBILITY NOT CONNECTED");
+            if (callback != null) callback.status("ACCESSIBILITY NOT CONNECTED");
             return false;
         }
         if ("up".equals(direction)) service.swipeUp();
         else if ("down".equals(direction)) service.swipeDown();
         else if ("left".equals(direction)) service.swipeLeft();
         else service.swipeRight();
+        return true;
+    }
+
+    private boolean openWebUrl(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return false;
+        String value = raw.trim();
+        Uri uri = Uri.parse(value).normalizeScheme();
+        String scheme = uri.getScheme();
+        if (!("http".equals(scheme) || "https".equals(scheme))) {
+            if (callback != null) callback.status("ACTION BLOCKED • URL SCHEME");
+            return false;
+        }
+        Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+        if (intent.resolveActivity(context.getPackageManager()) == null) {
+            if (callback != null) callback.status("ACTION FAILED • NO BROWSER");
+            return false;
+        }
+        launch(intent);
         return true;
     }
 
