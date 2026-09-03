@@ -43,6 +43,10 @@ public final class NovaActionEngine {
                     catch (NumberFormatException ignored) { delay = 500L; }
                     SystemClock.sleep(Math.max(100L, Math.min(delay, 2500L)));
                     return true;
+                case "type_text":
+                    return typeText(value);
+                case "press_enter":
+                    return pressEnter();
                 case "search":
                     if (value == null || value.trim().isEmpty()) return false;
                     return openWebUrl("https://www.google.com/search?q=" + Uri.encode(value.trim()));
@@ -71,6 +75,24 @@ public final class NovaActionEngine {
             if (callback != null) callback.status("ACTION FAILED • " + action);
             return false;
         }
+    }
+
+    private boolean typeText(String value) {
+        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+        if (service == null) {
+            if (callback != null) callback.status("ACCESSIBILITY NOT CONNECTED");
+            return false;
+        }
+        return service.typeText(value == null ? "" : value);
+    }
+
+    private boolean pressEnter() {
+        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+        if (service == null) {
+            if (callback != null) callback.status("ACCESSIBILITY NOT CONNECTED");
+            return false;
+        }
+        return service.pressEnter();
     }
 
     public boolean global(int action) {
