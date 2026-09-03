@@ -4,8 +4,10 @@ import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
 import android.graphics.Point;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Build;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -62,7 +64,7 @@ public class GestureAccessibilityService extends AccessibilityService {
         CharSequence desc = node.getContentDescription();
         String label = text != null && text.length() > 0 ? text.toString().trim()
                 : (desc != null ? desc.toString().trim() : "");
-        if (!label.isEmpty() || node.isClickable()) {
+        if (!label.isEmpty() || node.isClickable() || node.isEditable() || node.isFocusable()) {
             android.graphics.Rect bounds = new android.graphics.Rect();
             node.getBoundsInScreen(bounds);
             out.append("• ")
@@ -71,6 +73,8 @@ public class GestureAccessibilityService extends AccessibilityService {
                     .append(" | clickable=").append(node.isClickable())
                     .append(" | enabled=").append(node.isEnabled())
                     .append(" | editable=").append(node.isEditable())
+                    .append(" | focused=").append(node.isFocused())
+                    .append(" | focusable=").append(node.isFocusable())
                     .append(" | bounds=").append(bounds.left).append(',').append(bounds.top)
                     .append('-').append(bounds.right).append(',').append(bounds.bottom)
                     .append('\n');
@@ -154,6 +158,82 @@ public class GestureAccessibilityService extends AccessibilityService {
             Log.e(TAG, "CLICK NODE ERROR", e);
         }
         return false;
+    }
+
+    /** Replaces the currently focused editable field, or the best visible editable field, using AccessibilityNodeInfo. */
+    public boolean typeText(String text) {
+        if (text == null) return false;
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) return false;
+        AccessibilityNodeInfo target = findBestEditableNode(root, 0, true);
+        if (target == null) target = findBestEditableNode(root, 0, false);
+        if (target == null || !target.isEnabled()) return false;
+        try {
+            if (!target.isFocused() && target.isFocusable()) target.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
+            Bundle args = new Bundle();
+            args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
+            boolean changed = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
+            if (!changed) return false;
+            CharSequence actual = target.getText();
+            Log.d(TAG, "TEXT INPUT APPLIED • chars=" + text.length() + " • verified=" + (actual != null && actual.toString().equals(text)));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "TEXT INPUT ERROR", e);
+            return false;
+        }
+    }
+
+    private AccessibilityNodeInfo findBestEditableNode(AccessibilityNodeInfo node, int depth, boolean focusedOnly) {
+        if (node == null || depth > 18) return null;
+        AccessibilityNodeInfo best = null;
+        int bestScore = -1;
+        if (node.isVisibleToUser() && node.isEnabled() && node.isEditable() && (!focusedOnly || node.isFocused())) {
+            best = node;
+            bestScore = (node.isFocused() ? 1000 : 0) + (node.isFocusable() ? 20 : 0);
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo candidate = findBestEditableNode(node.getChild(i), depth + 1, focusedOnly);
+            if (candidate == null) continue;
+            int score = (candidate.isFocused() ? 1000 : 0) + (candidate.isFocusable() ? 20 : 0);
+            if (score > bestScore) { best = candidate; bestScore = score; }
+        }
+        return best;
+    }
+
+    /** Submits the focused editable field through the platform IME action when available. */
+    public boolean pressEnter() {
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) return false;
+        AccessibilityNodeInfo focused = findFocusedEditable(root, 0);
+        if (focused != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                if (focused.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER)) {
+                    Log.d(TAG, "IME ENTER DISPATCHED");
+                    return true;
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "IME ENTER ERROR", e);
+            }
+        }
+        String[] submitLabels = {"search", "go", "enter", "done"};
+        for (String label : submitLabels) {
+            AccessibilityNodeInfo target = findBestTextNode(root, label, 0);
+            if (target != null && clickNodeOrParent(target)) {
+                Log.d(TAG, "SUBMIT FALLBACK CLICK • " + label);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private AccessibilityNodeInfo findFocusedEditable(AccessibilityNodeInfo node, int depth) {
+        if (node == null || depth > 18) return null;
+        if (node.isVisibleToUser() && node.isEnabled() && node.isEditable() && node.isFocused()) return node;
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo result = findFocusedEditable(node.getChild(i), depth + 1);
+            if (result != null) return result;
+        }
+        return null;
     }
 
     private void collectText(AccessibilityNodeInfo node, StringBuilder out, int depth) {
