@@ -134,5 +134,5 @@ public final class NovaBrain {
     private void rememberAndReply(String text){String value=text==null?"":text.trim();if(value.isEmpty())return;memory.remember("assistant",value);reply(value);}
     private void status(String text){if(listener!=null)main.post(()->listener.onStatus(text));}
     private void reply(String text){if(listener!=null)main.post(()->listener.onReply(text));}
-    public void shutdown(){synchronized(this){shutdown=true;generation++;queue.clear();activeGoal="";processing=false;}ai.shutdown();orchestrator.shutdown();web.shutdown();agentExecutor.shutdownNow();}
+    public void shutdown(){synchronized(this){shutdown=true;generation++;queue.clear();activeGoal="";processing=false;}ai.shutdown();orchestrator.shutdown();agentExecutor.shutdownNow();}
 }
