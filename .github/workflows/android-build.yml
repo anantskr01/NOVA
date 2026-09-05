@@ -3,10 +3,12 @@ name: NOVA Android Build
 on:
   push:
     branches:
-      - feature/nova-agent-core-v1
+      - feature/nova-master-build
+      - main
   pull_request:
     branches:
       - main
+      - feature/nova-master-build
 
 jobs:
   build:
