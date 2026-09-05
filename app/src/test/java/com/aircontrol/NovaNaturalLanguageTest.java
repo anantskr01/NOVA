@@ -1,15 +1,20 @@
 package com.aircontrol;
 
 import org.junit.Test;
-import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
-/** Regression guard: open-ended questions must not be intercepted by phrase-specific calculator skills. */
+/** JVM-safe regression tests for wording-independent reasoning primitives. */
 public class NovaNaturalLanguageTest {
     @Test
-    public void calculatorSkillIsNotPhraseRouted() {
-        // The old skill implementation matched only "what is ..." and therefore made
-        // "what's ..." behave differently. Calculator behavior now belongs to the agent tool layer.
-        assertFalse("This test documents that wording-specific calculator routing was removed.",
-                "what's 2+2".equals("what is 2+2"));
+    public void arithmeticToolHandlesEquivalentExpressions() {
+        assertEquals("4", NovaCalculator.calculate("2+2"));
+        assertEquals("4", NovaCalculator.calculate("2 + 2"));
+        assertEquals("4", NovaCalculator.calculate("(2) + (2)"));
+    }
+
+    @Test
+    public void arithmeticToolRejectsNonArithmeticInput() {
+        assertTrue(NovaCalculator.calculate("open chrome").isEmpty());
     }
 }
