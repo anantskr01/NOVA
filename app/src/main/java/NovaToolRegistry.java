@@ -47,11 +47,19 @@ public final class NovaToolRegistry {
     public synchronized boolean contains(String type) { return type != null && tools.containsKey(type.trim().toLowerCase(Locale.ROOT)); }
     public synchronized NovaTool get(String type) { return type == null ? null : tools.get(type.trim().toLowerCase(Locale.ROOT)); }
     public synchronized List<NovaTool> all() { return Collections.unmodifiableList(new ArrayList<>(tools.values())); }
+    /** Compact registry metadata for planning; execution still requires schema/policy validation. */
     public synchronized String promptSummary() {
         StringBuilder out = new StringBuilder();
         for (NovaTool t : tools.values()) {
             if (out.length() > 7000) break;
-            out.append("- ").append(t.type()).append(": ").append(t.description()).append("; reversible=").append(t.reversible()).append('\n');
+            out.append("- ").append(t.type()).append(": ").append(t.description())
+                    .append("; category=").append(t.category())
+                    .append("; readOnly=").append(t.readOnly())
+                    .append("; reversible=").append(t.reversible())
+                    .append("; confirmation=").append(t.confirmationRequired())
+                    .append("; capability=").append(t.capabilityRequirement())
+                    .append("; timeoutMs=").append(t.timeoutMillis())
+                    .append("; input=").append(t.inputSchema()).append('\n');
         }
         return out.toString().trim();
     }
