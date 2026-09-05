@@ -16,7 +16,7 @@ import java.util.PriorityQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
 /** Priority-aware scheduler with persisted task state and resumable lifecycle. */
-public final class NovaTaskManager {
+public final class NovaTaskManager implements NovaBrain.GoalOutcomeListener {
     public static final String QUEUED = "queued";
     public static final String RUNNING = "running";
     public static final String PAUSED = "paused";
@@ -88,7 +88,7 @@ public final class NovaTaskManager {
         this.brain = brain;
         this.context = null;
         this.prefs = null;
-        // Persistence is initialized lazily by the constructor overload below.
+        if (this.brain != null) this.brain.setGoalOutcomeListener(this);
         main.post(pump);
     }
 
@@ -96,8 +96,33 @@ public final class NovaTaskManager {
         this.brain = brain;
         this.context = context == null ? null : context.getApplicationContext();
         this.prefs = this.context == null ? null : this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        if (this.brain != null) this.brain.setGoalOutcomeListener(this);
         loadPersisted();
         main.post(pump);
+    }
+
+    @Override public void onGoalFinished(String goal, String outcome, String message) {
+        synchronized (this) {
+            if (shutdown || active == null || !RUNNING.equals(active.status)) return;
+            if (goal == null || !active.goal.equals(goal)) return;
+            if (NovaBrain.OUTCOME_SUCCESS.equals(outcome)) {
+                active.status = COMPLETED;
+            } else if (NovaBrain.OUTCOME_CANCELLED.equals(outcome)) {
+                active.status = CANCELLED;
+            } else if (NovaBrain.OUTCOME_WAITING_USER.equals(outcome)) {
+                active.status = NEEDS_USER;
+            } else {
+                active.status = FAILED;
+            }
+            if (NEEDS_USER.equals(active.status)) {
+                active.finishedAt = 0L;
+            } else {
+                active.finishedAt = System.currentTimeMillis();
+            }
+            active = null;
+            persistLocked();
+            if (!shutdown) pumpLocked();
+        }
     }
 
     public synchronized String submit(String goal, int priority) {
@@ -119,12 +144,8 @@ public final class NovaTaskManager {
         if (shutdown || brain == null) return;
         if (active != null) {
             if (brain.isBusy()) return;
-            if (RUNNING.equals(active.status)) {
-                active.status = COMPLETED;
-                active.finishedAt = System.currentTimeMillis();
-                persistLocked();
-            }
-            active = null;
+            // Brain outcomes are authoritative. Do not infer success from an idle Brain.
+            return;
         }
         if (brain.isBusy()) return;
         Task next = queue.poll();
@@ -248,7 +269,7 @@ public final class NovaTaskManager {
                 out.put(new JSONObject().put("id", task.id).put("goal", task.goal)
                         .put("priority", task.priority).put("status", task.status)
                         .put("createdAt", task.createdAt).put("startedAt", task.startedAt)
-                        .put("finishedAt", task.finishedAt));
+                        .put("finishedAt", task.finishedAt).put("sequence", task.sequence));
             } catch (Exception ignored) { }
         }
         return out;
