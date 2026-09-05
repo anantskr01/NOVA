@@ -58,9 +58,7 @@ public final class NovaAgentPlanner {
     private final Listener listener;
     private final NovaToolRegistry tools;
 
-    public NovaAgentPlanner(ActionExecutor e, Listener l) {
-        this(e, l, new NovaToolRegistry());
-    }
+    public NovaAgentPlanner(ActionExecutor e, Listener l) { this(e, l, new NovaToolRegistry()); }
 
     public NovaAgentPlanner(ActionExecutor e, Listener l, NovaToolRegistry t) {
         executor = e;
@@ -68,9 +66,7 @@ public final class NovaAgentPlanner {
         tools = t == null ? new NovaToolRegistry() : t;
     }
 
-    public boolean execute(String rawPlan) {
-        return executeDetailed(rawPlan).completed;
-    }
+    public boolean execute(String rawPlan) { return executeDetailed(rawPlan).completed; }
 
     public ExecutionResult executeDetailed(String rawPlan) {
         long started = System.currentTimeMillis();
@@ -128,12 +124,14 @@ public final class NovaAgentPlanner {
                 String beforePackage = safePackage();
                 listener.status("AGENT • STEP " + (i + 1) + "/" + actions.length() + " • OBSERVE");
                 listener.status("AGENT • STEP " + (i + 1) + "/" + actions.length() + " • ACT • " + type);
+                NovaDiagnostics.event("action_validated", type);
 
                 String output = executeOne(type, value);
                 boolean ok = outputOk(output);
                 if (!ok && shouldRetry(type)) {
                     SystemClock.sleep(RETRY_DELAY_MS);
                     listener.status("AGENT • RETRY • " + type);
+                    NovaDiagnostics.event("action_retry", type);
                     output = executeOne(type, value);
                     ok = outputOk(output);
                 }
@@ -142,17 +140,20 @@ public final class NovaAgentPlanner {
                     addResult(outputs, i, type, value, output, before, "", false, beforePackage, safePackage());
                     failures.add(type);
                     listener.status("AGENT • RECOVERY NEEDED • " + type);
+                    NovaDiagnostics.event("action_failed", type);
                     break;
                 }
 
                 if (isInformational(type) || "parallel".equals(type)) {
                     addResult(outputs, i, type, value, output, before, before, true, beforePackage, beforePackage);
+                    NovaDiagnostics.event("tool_executed", type);
                     continue;
                 }
 
                 if ("wait".equals(type)) {
-                    addResult(outputs, i, type, value, output, before, screen(), true, beforePackage, safePackage());
-                    previous = screen();
+                    String waited = screen();
+                    addResult(outputs, i, type, value, output, before, waited, true, beforePackage, safePackage());
+                    previous = waited;
                     previousPackage = safePackage();
                     continue;
                 }
@@ -179,12 +180,14 @@ public final class NovaAgentPlanner {
                 if (!verified) {
                     failures.add(type + "_verification");
                     listener.status("AGENT • RECOVERY • STEP NOT CONFIRMED");
+                    NovaDiagnostics.event("verification_failed", type);
                     break;
                 }
 
                 previous = after.isEmpty() ? previous : after;
                 previousPackage = afterPackage.isEmpty() ? previousPackage : afterPackage;
                 listener.status("AGENT • VERIFY • PASS • " + type);
+                NovaDiagnostics.event("verification_passed", type);
 
                 // Exactly one Android UI mutation per reasoning turn. NovaBrain receives the
                 // fresh observation and asks the model what should happen next.
@@ -198,12 +201,11 @@ public final class NovaAgentPlanner {
             } else {
                 listener.status("AGENT • TASK VERIFIED");
             }
-            if (failures.isEmpty() && outputs.length() == 0 && !say.isEmpty()) {
-                listener.reply(say);
-            }
+            if (failures.isEmpty() && outputs.length() == 0 && !say.isEmpty()) listener.reply(say);
             return result(true, failures.isEmpty(), failures.size(), failures.isEmpty() ? "" : failures.get(0), finalScreen, say, outputs.toString());
         } catch (Exception e) {
             Log.e(TAG, "PLAN EXECUTION ERROR", e);
+            NovaDiagnostics.event("planner_exception", e.getClass().getSimpleName());
             listener.status("AGENT • SAFE STOP");
             return result(false, false, 1, "planner_exception", "", "", "");
         }
@@ -219,11 +221,8 @@ public final class NovaAgentPlanner {
             if ("parallel".equals(type)) return executor.executeParallel(value);
             if ("click_text".equals(type)) return boolResult(executor.clickText(value));
             if ("click_index".equals(type)) {
-                try {
-                    return boolResult(executor.clickVisibleIndex(Integer.parseInt(value)));
-                } catch (NumberFormatException e) {
-                    return "{\"ok\":false,\"error\":\"invalid_index\"}";
-                }
+                try { return boolResult(executor.clickVisibleIndex(Integer.parseInt(value))); }
+                catch (NumberFormatException e) { return "{\"ok\":false,\"error\":\"invalid_index\"}"; }
             }
             if ("wait".equals(type)) {
                 long ms;
@@ -235,13 +234,12 @@ public final class NovaAgentPlanner {
             return boolResult(executor.execute(type, value));
         } catch (Exception e) {
             Log.e(TAG, "ACTION ERROR: " + type, e);
+            NovaDiagnostics.event("tool_exception", type);
             return "{\"ok\":false,\"error\":\"tool_exception\"}";
         }
     }
 
-    private boolean isInformational(String type) {
-        return NovaActionSchema.isInformational(type);
-    }
+    private boolean isInformational(String type) { return NovaActionSchema.isInformational(type); }
 
     private boolean outputOk(String output) {
         if (output == null || output.trim().isEmpty()) return false;
@@ -249,9 +247,7 @@ public final class NovaAgentPlanner {
         catch (Exception e) { return true; }
     }
 
-    private String boolResult(boolean ok) {
-        return "{\"ok\":" + ok + "}";
-    }
+    private String boolResult(boolean ok) { return "{\"ok\":" + ok + "}"; }
 
     private void addResult(JSONArray array, int index, String type, String value, String output,
                            String before, String after, boolean verified,
@@ -288,24 +284,36 @@ public final class NovaAgentPlanner {
         if (after == null || after.isEmpty()) return false;
 
         if ("type_text".equals(type)) {
-            return true;
+            // Never treat a successful API call as proof. Prefer visible evidence of the entered
+            // value; for masked/password fields, a changed accessibility snapshot is the strongest
+            // evidence available without reading or exposing the secret itself.
+            if (!value.isEmpty() && after.contains(value)) return true;
+            return !after.equals(before);
         }
 
         if (("open_app".equals(type) || "open_package".equals(type) || "open_url".equals(type))
-                && !afterPackage.isEmpty()
-                && !afterPackage.equals(beforePackage)) {
-            return true;
+                && !afterPackage.isEmpty()) {
+            return !afterPackage.equals(beforePackage) || !after.equals(before);
         }
 
-        if (before.isEmpty()) return true;
-        if (!after.equals(before)) return true;
-
-        if ("click_text".equals(type) && !value.isEmpty()) {
+        if ("click_text".equals(type)) {
+            if (value.isEmpty() || after.equals(before)) return false;
+            String target = value.toLowerCase();
+            String b = before.toLowerCase();
             String a = after.toLowerCase();
-            return a.contains(value.toLowerCase()) && (a.contains("clickable=true") || a.contains("focusable=true"));
+            // A changed screen is not sufficient by itself when the intended target remains
+            // completely untouched. Accept a target disappearance/change, focus/state evidence,
+            // or a package transition as concrete UI evidence.
+            boolean targetChanged = b.contains(target) && !a.contains(target);
+            boolean stateEvidence = a.contains("focused=true") || a.contains("selected=true")
+                    || a.contains("checked=true") || a.contains("enabled=false");
+            return targetChanged || stateEvidence || !afterPackage.equals(beforePackage);
         }
 
-        return false;
+        // For scrolling/swiping and other UI mutations, require an observable accessibility or
+        // package-state change. At an unchanged edge, verification fails and Brain gets a chance
+        // to recover instead of falsely claiming the gesture worked.
+        return !after.equals(before) || !afterPackage.equals(beforePackage);
     }
 
     private String screen() {
