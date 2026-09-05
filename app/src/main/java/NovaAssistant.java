@@ -3,7 +3,6 @@ package com.aircontrol;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.net.Uri;
 import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
 import android.util.Log;
@@ -30,6 +29,7 @@ public final class NovaAssistant {
     private final NovaAppCatalog apps;
     private final NovaActionEngine actions;
     private final NovaBrain brain;
+    private final NovaTaskManager taskManager;
     private TextToSpeech tts;
 
     public NovaAssistant(Context context, Listener listener) {
@@ -40,16 +40,17 @@ public final class NovaAssistant {
         secureStore = new NovaSecureStore(this.context);
         apps = new NovaAppCatalog(this.context);
         actions = new NovaActionEngine(this.context, new NovaActionEngine.Callback() {
-            @Override public void status(String text) { status(text); }
-            @Override public void reply(String text) { say(text); }
+            @Override public void status(String text) { NovaAssistant.this.status(text); }
+            @Override public void reply(String text) { NovaAssistant.this.say(text); }
         });
         brain = new NovaBrain(this.context, actions, memory, new NovaBrain.Listener() {
-            @Override public void onStatus(String text) { status(text); }
-            @Override public void onReply(String text) { say(text); }
+            @Override public void onStatus(String text) { NovaAssistant.this.status(text); }
+            @Override public void onReply(String text) { NovaAssistant.this.say(text); }
         });
+        taskManager = new NovaTaskManager(brain);
         skills = new NovaSkillRegistry(this.context, new NovaSkillRegistry.Callback() {
-            @Override public void reply(String text) { say(text); }
-            @Override public void status(String text) { status(text); }
+            @Override public void reply(String text) { NovaAssistant.this.say(text); }
+            @Override public void status(String text) { NovaAssistant.this.status(text); }
         });
         tts = new TextToSpeech(this.context, result -> {
             if (result == TextToSpeech.SUCCESS) {
@@ -99,10 +100,33 @@ public final class NovaAssistant {
 
             if (containsAny(c, "stop nova", "stop listening", "be quiet", "stop speaking")) {
                 if (tts != null) tts.stop();
-                brain.cancelAllGoals();
+                taskManager.cancelAll();
                 say("Okay. I stopped NOVA's active and queued tasks.");
                 return;
             }
+
+            if (containsAny(c, "task status", "show tasks", "list tasks", "what tasks are running", "task list")) {
+                say(taskManager.statusText());
+                return;
+            }
+            if (containsAny(c, "active task", "what are you doing", "what task are you running")) {
+                say(taskManager.activeText());
+                return;
+            }
+            if (c.equals("cancel tasks") || c.equals("cancel all tasks") || c.equals("cancel all")) {
+                taskManager.cancelAll();
+                say("All NOVA tasks have been cancelled.");
+                return;
+            }
+            java.util.regex.Matcher cancelTask = java.util.regex.Pattern.compile(
+                    "(?i)cancel\\s+(?:task\\s+)?(NOVA-[A-Z0-9]{8})"
+            ).matcher(command);
+            if (cancelTask.matches()) {
+                boolean cancelled = taskManager.cancel(cancelTask.group(1));
+                say(cancelled ? "Cancelled " + cancelTask.group(1) + "." : "I couldn't cancel that task. It may already be finished or queued behind another task.");
+                return;
+            }
+
             if (containsAny(c, "go home", "home screen", "take me home")) { executeLocal("home", "Going home."); return; }
             if (containsAny(c, "go back", "back")) { executeLocal("back", "Going back."); return; }
             if (containsAny(c, "recent apps", "open recents", "show recents")) { executeLocal("recents", "Opening recent apps."); return; }
@@ -141,7 +165,12 @@ public final class NovaAssistant {
             }
 
             if (hasAiCore()) {
-                brain.think(command);
+                String id = taskManager.submit(command, 5);
+                if (id.isEmpty()) {
+                    say("I couldn't add that task to NOVA's task manager.");
+                } else {
+                    status("TASK " + id + " • ACCEPTED");
+                }
                 return;
             }
 
@@ -161,7 +190,7 @@ public final class NovaAssistant {
         if (c.equals("forget everything") || c.equals("clear memory") || c.equals("delete my memory")) {
             memory.clear();
             context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().clear().apply();
-            brain.cancelAllGoals();
+            taskManager.cancelAll();
             say("Local NOVA memory has been cleared.");
             return true;
         }
@@ -196,9 +225,7 @@ public final class NovaAssistant {
     private boolean openByName(String name) {
         if (name.isEmpty()) return false;
         String lower = name.toLowerCase(Locale.ROOT);
-        if (lower.contains("youtube")) {
-            return actions.execute("open_app", "YouTube");
-        }
+        if (lower.contains("youtube")) return actions.execute("open_app", "YouTube");
         android.content.pm.ResolveInfo info = apps.resolve(name);
         Intent launchIntent = apps.launchIntent(info);
         if (launchIntent != null) {
@@ -214,10 +241,7 @@ public final class NovaAssistant {
         web.search(query, new NovaWebTool.Callback() {
             @Override public void onResult(String text) { say(text); }
             @Override public void onError(String error) {
-                if (!actions.execute("search", query)) {
-                    say("I couldn't open the search results.");
-                    return;
-                }
+                if (!actions.execute("search", query)) { say("I couldn't open the search results."); return; }
                 say("I opened the search results.");
             }
         });
@@ -225,14 +249,12 @@ public final class NovaAssistant {
 
     private String getUiSnapshot() {
         GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-        if (service == null) return "Accessibility access is not connected.";
-        return service.getUiSnapshot();
+        return service == null ? "Accessibility access is not connected." : service.getUiSnapshot();
     }
 
     private String readScreen() {
         GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-        if (service == null) return "Accessibility access is not connected, so I cannot inspect the current screen.";
-        return service.getVisibleTextSummary();
+        return service == null ? "Accessibility access is not connected, so I cannot inspect the current screen." : service.getVisibleTextSummary();
     }
 
     private void launch(Intent intent) {
