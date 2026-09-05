@@ -24,7 +24,7 @@ public class NovaActionSchemaTest {
     }
 
     @Test public void rejectsParallelMutation() throws Exception {
-        JSONArray steps = new JSONArray().put(new JSONObject().put("type", "remember").put("value", "{\"key\":\"x\",\"value\":\"y\"}"));
+        JSONArray steps = new JSONArray().put(new JSONObject().put("type", "home"));
         String error = NovaActionSchema.validate(new JSONObject().put("type", "parallel").put("value", steps.toString()));
         assertTrue(error.startsWith("parallel_invalid_step:0:parallel_mutation_forbidden"));
     }
