@@ -93,9 +93,8 @@ public final class NovaAssistant {
         status("PROCESSING • " + command);
 
         try {
-            if (skills.handle(command)) return;
-            if (handleMemory(c, command)) return;
-
+            // Task controls must be handled before skills or the AI fallback.
+            // This guarantees cancellation never falls through to "AI unavailable".
             if (containsAny(c, "stop nova", "stop listening", "be quiet", "stop speaking")) {
                 if (tts != null) tts.stop();
                 taskManager.cancelAll();
@@ -120,12 +119,21 @@ public final class NovaAssistant {
                 say("All NOVA tasks have been cancelled.");
                 return;
             }
-            java.util.regex.Matcher cancelTask = java.util.regex.Pattern.compile("(?i)cancel\\s+(?:task\\s+)?(NOVA-T\\d{4})").matcher(command);
+
+            // Accept both typed IDs (NOVA-T0001) and common voice-recognition variants.
+            java.util.regex.Matcher cancelTask = java.util.regex.Pattern.compile(
+                    "(?i)^cancel\\s+(?:task\\s+)?(?:nova[- ]?t\\s*[- ]?(\\d{1,6})|nova[- ]?t(\\d{1,6}))\\s*$"
+            ).matcher(command);
             if (cancelTask.matches()) {
-                boolean cancelled = taskManager.cancel(cancelTask.group(1));
-                say(cancelled ? "Cancelled " + cancelTask.group(1) + "." : "I couldn't cancel that task. It may already be finished.");
+                String digits = cancelTask.group(1) != null ? cancelTask.group(1) : cancelTask.group(2);
+                String id = "NOVA-T" + String.format(Locale.US, "%04d", Integer.parseInt(digits));
+                boolean cancelled = taskManager.cancel(id);
+                say(cancelled ? "Cancelled " + id + "." : "I couldn't cancel " + id + ". It may already be finished or no longer exists.");
                 return;
             }
+
+            if (skills.handle(command)) return;
+            if (handleMemory(c, command)) return;
 
             if (containsAny(c, "go home", "home screen", "take me home")) { executeLocal("home", "Going home."); return; }
             if (containsAny(c, "go back", "back")) { executeLocal("back", "Going back."); return; }
