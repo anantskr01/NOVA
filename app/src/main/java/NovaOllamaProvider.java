@@ -6,13 +6,13 @@ import org.json.JSONObject;
 /** Native Ollama /api/chat provider. */
 public final class NovaOllamaProvider extends NovaHttpAiProvider {
     @Override public String id() { return "ollama"; }
+    @Override public boolean localOnly() { return true; }
+    @Override public boolean supportsStreaming() { return true; }
 
     @Override
     public boolean supports(String endpoint) {
         String e = endpoint == null ? "" : endpoint.trim().toLowerCase();
         if (e.isEmpty()) return false;
-        // /v1 is reserved for OpenAI-compatible providers. Ollama's native
-        // endpoint is /api/chat (or an Ollama host that will receive /api/chat).
         return !e.contains("/v1");
     }
 
@@ -22,6 +22,14 @@ public final class NovaOllamaProvider extends NovaHttpAiProvider {
         if (value.endsWith("/api/chat")) return value;
         if (value.endsWith("/api")) return value + "/chat";
         return value + "/api/chat";
+    }
+
+    @Override
+    public String healthEndpoint(String endpoint) {
+        String value = endpoint == null ? "" : endpoint.trim().replaceFirst("/+$", "");
+        if (value.endsWith("/api/chat")) value = value.substring(0, value.length() - "/api/chat".length());
+        if (value.endsWith("/api")) value = value.substring(0, value.length() - 4);
+        return value + "/api/tags";
     }
 
     @Override
