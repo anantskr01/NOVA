@@ -1,0 +1,29 @@
+name: NOVA Master Verification
+
+on:
+  push:
+    branches:
+      - feature/nova-master-build
+  pull_request:
+    branches:
+      - main
+      - feature/nova-master-build
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Make Gradle executable
+        run: chmod +x gradlew
+      - name: Run unit tests and assemble debug APK
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
