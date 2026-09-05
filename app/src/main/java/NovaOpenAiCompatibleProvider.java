@@ -6,11 +6,21 @@ import org.json.JSONObject;
 /** OpenAI-compatible /v1/chat/completions provider adapter. */
 public final class NovaOpenAiCompatibleProvider extends NovaHttpAiProvider {
     @Override public String id() { return "openai-compatible"; }
+    @Override public boolean requiresApiKey() { return true; }
 
     @Override
     public boolean supports(String endpoint) {
         String e = endpoint == null ? "" : endpoint.trim().toLowerCase();
         return e.contains("/v1") || e.contains("chat/completions");
+    }
+
+    @Override
+    public String healthEndpoint(String endpoint) {
+        String value = endpoint == null ? "" : endpoint.trim().replaceFirst("/+$", "");
+        if (value.endsWith("/chat/completions")) value = value.substring(0, value.length() - "/chat/completions".length());
+        if (value.endsWith("/chat")) value = value.substring(0, value.length() - "/chat".length());
+        if (!value.endsWith("/v1")) value += "/v1";
+        return value + "/models";
     }
 
     @Override
