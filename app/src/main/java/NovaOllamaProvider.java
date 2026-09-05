@@ -10,7 +10,10 @@ public final class NovaOllamaProvider extends NovaHttpAiProvider {
     @Override
     public boolean supports(String endpoint) {
         String e = endpoint == null ? "" : endpoint.trim().toLowerCase();
-        return !e.isEmpty() && !e.contains("/v1/chat/completions");
+        if (e.isEmpty()) return false;
+        // /v1 is reserved for OpenAI-compatible providers. Ollama's native
+        // endpoint is /api/chat (or an Ollama host that will receive /api/chat).
+        return !e.contains("/v1");
     }
 
     @Override
