@@ -155,6 +155,12 @@ public final class NovaTaskManager {
 
     public synchronized Task active() { return active; }
     public synchronized int queuedCount() { return queue.size(); }
+
+    public synchronized String activeText() {
+        if (active == null || !RUNNING.equals(active.status)) return "NOVA is idle.";
+        return "NOVA is running " + active.id + ": " + active.goal;
+    }
+
     public synchronized String statusText() {
         if (tasks.isEmpty()) return "NOVA has no tracked tasks.";
         StringBuilder out = new StringBuilder("NOVA TASKS\n");
