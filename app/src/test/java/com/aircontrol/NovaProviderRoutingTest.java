@@ -20,11 +20,11 @@ public class NovaProviderRoutingTest {
         NovaAiProviderManager manager = new NovaAiProviderManager();
         NovaAiProvider ollama = manager.provider("http://192.168.29.210:11434");
         NovaAiProvider cloud = manager.provider("https://api.example.com/v1");
-        assertNotNull(ollama);
-        assertNotNull(cloud);
-        assertTrue(ollama.localOnly());
-        assertFalse(ollama.requiresApiKey());
+        assertNotNull(ollama); assertNotNull(cloud);
+        assertTrue(ollama.localOnly()); assertFalse(ollama.requiresApiKey());
         assertTrue(cloud.requiresApiKey());
+        assertEquals("http://192.168.29.210:11434/api/tags", ollama.healthEndpoint("http://192.168.29.210:11434"));
+        assertEquals("https://api.example.com/v1/models", cloud.healthEndpoint("https://api.example.com/v1"));
         manager.shutdown();
     }
 
