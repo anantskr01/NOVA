@@ -47,7 +47,7 @@ public final class NovaAssistant {
             @Override public void onStatus(String text) { NovaAssistant.this.status(text); }
             @Override public void onReply(String text) { NovaAssistant.this.say(text); }
         });
-        taskManager = new NovaTaskManager(brain);
+        taskManager = new NovaTaskManager(this.context, brain);
         skills = new NovaSkillRegistry(this.context, new NovaSkillRegistry.Callback() {
             @Override public void reply(String text) { NovaAssistant.this.say(text); }
             @Override public void status(String text) { NovaAssistant.this.status(text); }
@@ -93,7 +93,6 @@ public final class NovaAssistant {
         status("PROCESSING • " + command);
 
         try {
-            // Task controls must be handled before skills or the AI fallback.
             if (containsAny(c, "stop nova", "stop listening", "be quiet", "stop speaking")) {
                 if (tts != null) tts.stop();
                 taskManager.cancelAll();
@@ -101,12 +100,10 @@ public final class NovaAssistant {
                 return;
             }
             if (containsAny(c, "task status", "show tasks", "list tasks", "what tasks are running", "task list")) {
-                say(taskManager.statusText());
-                return;
+                say(taskManager.statusText()); return;
             }
             if (containsAny(c, "active task", "what are you doing", "what task are you running")) {
-                say(taskManager.activeText());
-                return;
+                say(taskManager.activeText()); return;
             }
             if (containsAny(c, "cancel queued tasks", "cancel queued goals")) {
                 int count = taskManager.cancelQueued();
@@ -114,9 +111,7 @@ public final class NovaAssistant {
                 return;
             }
             if (c.equals("cancel tasks") || c.equals("cancel all tasks") || c.equals("cancel all")) {
-                taskManager.cancelAll();
-                say("All NOVA tasks have been cancelled.");
-                return;
+                taskManager.cancelAll(); say("All NOVA tasks have been cancelled."); return;
             }
 
             java.util.regex.Matcher cancelTask = java.util.regex.Pattern.compile(
@@ -160,13 +155,10 @@ public final class NovaAssistant {
                 GestureAccessibilityService service = GestureAccessibilityService.getInstance();
                 int index = Integer.parseInt(numbered.group(1));
                 boolean ok = service != null && service.clickVisibleIndex(index);
-                say(ok ? "Done." : "I couldn't activate that visible item.");
-                return;
+                say(ok ? "Done." : "I couldn't activate that visible item."); return;
             }
 
-            if (c.startsWith("open ")) {
-                if (openByName(command.substring(5).trim())) return;
-            }
+            if (c.startsWith("open ")) if (openByName(command.substring(5).trim())) return;
 
             if (hasAiCore()) {
                 int priority = parsePriority(c);
@@ -176,8 +168,7 @@ public final class NovaAssistant {
                 else status("TASK " + id + " • ACCEPTED • P" + priority);
                 return;
             }
-
-            say("I can do built-in tablet tasks now. Configure an OpenAI-compatible AI endpoint for open-ended reasoning and multi-step planning.");
+            say("I can do built-in tablet tasks now. Configure an AI endpoint for open-ended reasoning and multi-step planning.");
         } catch (Exception e) {
             Log.e(TAG, "COMMAND ERROR", e);
             say("I couldn't complete that action. Check that the required Android permission is enabled.");
@@ -189,109 +180,54 @@ public final class NovaAssistant {
         if (c.startsWith("low priority ") || c.startsWith("when you can ") || c.startsWith("later ")) return NovaTaskManager.PRIORITY_LOW;
         return NovaTaskManager.PRIORITY_NORMAL;
     }
-
     private String stripPriorityPrefix(String original, String lower) {
         String[] prefixes = {"urgent ", "critical ", "high priority ", "low priority ", "when you can ", "later "};
         for (String prefix : prefixes) if (lower.startsWith(prefix)) return original.substring(prefix.length()).trim();
         return original.trim();
     }
-
     private void executeLocal(String type, String success) {
         boolean ok = actions.execute(type, "");
         say(ok ? success : "I couldn't perform that action. Check the required Android permission.");
     }
-
     private boolean handleMemory(String c, String original) {
         if (c.equals("forget everything") || c.equals("clear memory") || c.equals("delete my memory")) {
-            memory.clear();
-            context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().clear().apply();
-            taskManager.cancelAll();
-            say("Local NOVA memory has been cleared.");
-            return true;
+            memory.clear(); context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().clear().apply(); taskManager.cancelAll(); say("Local NOVA memory has been cleared."); return true;
         }
         if (c.startsWith("remember ")) {
             String note = original.substring(9).trim();
             if (!note.isEmpty()) {
                 int as = note.toLowerCase(Locale.ROOT).indexOf(" as ");
-                if (as > 0 && as + 4 < note.length()) {
-                    memory.rememberFact(note.substring(as + 4).trim(), note.substring(0, as).trim());
-                } else {
-                    context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().putString("note", note).apply();
-                    memory.rememberFact("note", note);
-                }
-                say("I'll remember that locally on this tablet.");
-                return true;
+                if (as > 0 && as + 4 < note.length()) memory.rememberFact(note.substring(as + 4).trim(), note.substring(0, as).trim());
+                else { context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().putString("note", note).apply(); memory.rememberFact("note", note); }
+                say("I'll remember that locally on this tablet."); return true;
             }
         }
         if (containsAny(c, "what do you remember", "what do you know about me")) {
             String note = memory.factsSummary();
             if (note.equals("No saved facts.")) note = context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).getString("note", note);
-            say(note);
-            return true;
+            say(note); return true;
         }
         return false;
     }
-
     private boolean openByName(String name) {
         if (name.isEmpty()) return false;
         if (name.toLowerCase(Locale.ROOT).contains("youtube")) return actions.execute("open_app", "YouTube");
-        android.content.pm.ResolveInfo info = apps.resolve(name);
-        Intent launchIntent = apps.launchIntent(info);
-        if (launchIntent != null) {
-            launch(launchIntent);
-            say("Opening " + info.loadLabel(context.getPackageManager()) + ".");
-            return true;
-        }
+        android.content.pm.ResolveInfo info = apps.resolve(name); Intent launchIntent = apps.launchIntent(info);
+        if (launchIntent != null) { launch(launchIntent); say("Opening " + info.loadLabel(context.getPackageManager()) + "."); return true; }
         return false;
     }
-
     private void search(String query) {
         status("WEB RESEARCH • " + query);
         web.search(query, new NovaWebTool.Callback() {
             @Override public void onResult(String text) { say(text); }
-            @Override public void onError(String error) {
-                if (!actions.execute("search", query)) { say("I couldn't open the search results."); return; }
-                say("I opened the search results.");
-            }
+            @Override public void onError(String error) { if (!actions.execute("search", query)) { say("I couldn't open the search results."); return; } say("I opened the search results."); }
         });
     }
-
-    private String getUiSnapshot() {
-        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-        return service == null ? "Accessibility access is not connected." : service.getUiSnapshot();
-    }
-
-    private String readScreen() {
-        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
-        return service == null ? "Accessibility access is not connected, so I cannot inspect the current screen." : service.getVisibleTextSummary();
-    }
-
-    private void launch(Intent intent) {
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        context.startActivity(intent);
-    }
-
-    private boolean containsAny(String value, String... options) {
-        for (String option : options) if (value.equals(option) || value.contains(option)) return true;
-        return false;
-    }
-
-    private void status(String text) {
-        if (listener != null && text != null) listener.onStatus(text);
-    }
-
-    private void say(String text) {
-        if (text == null || text.trim().isEmpty()) return;
-        if (listener != null) listener.onStatus(text);
-        if (tts != null) {
-            try { tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NOVA"); } catch (Exception ignored) { }
-        }
-    }
-
-    public void destroy() {
-        if (tts != null) { try { tts.stop(); tts.shutdown(); } catch (Exception ignored) { } tts = null; }
-        taskManager.shutdown();
-        brain.shutdown();
-        web.shutdown();
-    }
+    private String getUiSnapshot() { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service == null ? "Accessibility access is not connected." : service.getUiSnapshot(); }
+    private String readScreen() { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service == null ? "Accessibility access is not connected, so I cannot inspect the current screen." : service.getVisibleTextSummary(); }
+    private void launch(Intent intent) { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(intent); }
+    private boolean containsAny(String value, String... options) { for (String option : options) if (value.equals(option) || value.contains(option)) return true; return false; }
+    private void status(String text) { if (listener != null && text != null) listener.onStatus(text); }
+    private void say(String text) { if (text == null || text.trim().isEmpty()) return; if (listener != null) listener.onStatus(text); if (tts != null) try { tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NOVA"); } catch (Exception ignored) { } }
+    public void destroy() { if (tts != null) { try { tts.stop(); tts.shutdown(); } catch (Exception ignored) { } tts = null; } taskManager.shutdown(); brain.shutdown(); web.shutdown(); }
 }
