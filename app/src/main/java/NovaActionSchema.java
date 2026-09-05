@@ -32,7 +32,7 @@ public final class NovaActionSchema {
     )));
 
     public static boolean isKnown(String type) { return type != null && TYPES.contains(type.trim().toLowerCase()); }
-    public static boolean isUiMutation(String type) { return type != null && UI_MUTATIONs.contains(type.trim().toLowerCase()); }
+    public static boolean isUiMutation(String type) { return type != null && UI_MUTATIONS.contains(type.trim().toLowerCase()); }
     public static boolean isInformational(String type) { return type != null && INFORMATIONAL.contains(type.trim().toLowerCase()); }
     public static boolean canRunInParallel(String type) { return isInformational(type); }
 
