@@ -5,9 +5,7 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 /** Bounded autonomous planner: observe -> act -> verify -> re-observe -> next action. */
 public final class NovaAgentPlanner {
@@ -34,19 +32,6 @@ public final class NovaAgentPlanner {
             say = y == null ? "" : y;
             toolResults = t == null ? "" : t;
         }
-    }
-
-    private static final Set<String> ALLOWED = new HashSet<>();
-    static {
-        String[] values = {
-                "home", "back", "recents", "notifications", "quick_settings",
-                "scroll_up", "scroll_down", "swipe_left", "swipe_right",
-                "open_url", "open_package", "open_app", "click_text", "click_index",
-                "type_text", "press_enter", "search", "read_screen", "screen_observe",
-                "web_search", "web_fetch", "web_research", "memory_search", "remember",
-                "parallel", "settings", "wait", "none"
-        };
-        for (String value : values) ALLOWED.add(value);
     }
 
     public interface ActionExecutor {
@@ -123,16 +108,20 @@ public final class NovaAgentPlanner {
                 JSONObject action = actions.optJSONObject(i);
                 if (action == null) {
                     failures.add("malformed_step_" + (i + 1));
+                    listener.status("AGENT • BLOCKED INVALID ACTION • malformed_step_" + (i + 1));
                     break;
                 }
 
-                String type = action.optString("type", "none").trim().toLowerCase();
-                String value = NovaAgentPolicy.bounded(action.optString("value", "").trim(), 2048);
-                if (!tools.contains(type) || !ALLOWED.contains(type)) {
-                    listener.status("AGENT • BLOCKED UNKNOWN ACTION • " + type);
-                    failures.add(type);
+                String type = action.optString("type", "").trim().toLowerCase();
+                String validation = NovaActionSchema.validate(action);
+                if (!tools.contains(type) || !NovaActionSchema.isKnown(type) || !validation.isEmpty()) {
+                    String reason = validation.isEmpty() ? "unknown_action:" + type : validation;
+                    listener.status("AGENT • BLOCKED INVALID ACTION • " + reason);
+                    failures.add(reason);
                     break;
                 }
+
+                String value = NovaAgentPolicy.bounded(action.optString("value", "").trim(), 2048);
                 if ("none".equals(type)) continue;
 
                 String before = screen();
@@ -175,7 +164,7 @@ public final class NovaAgentPlanner {
 
                 if (!verified) {
                     listener.status("AGENT • VERIFY • UNCERTAIN • " + type);
-                    SystemClock.sleep(RETRY_DELAY_MS);
+                    SystemClock.sleep(VERIFY_DELAY_MS);
                     String retry = screen();
                     String retryPackage = safePackage();
                     verified = verificationPassed(type, value, before, retry, beforePackage, retryPackage);
@@ -251,8 +240,7 @@ public final class NovaAgentPlanner {
     }
 
     private boolean isInformational(String type) {
-        return type.equals("web_search") || type.equals("web_fetch") || type.equals("web_research")
-                || type.equals("screen_observe") || type.equals("memory_search") || type.equals("remember");
+        return NovaActionSchema.isInformational(type);
     }
 
     private boolean outputOk(String output) {
@@ -300,8 +288,6 @@ public final class NovaAgentPlanner {
         if (after == null || after.isEmpty()) return false;
 
         if ("type_text".equals(type)) {
-            // ACTION_SET_TEXT returning true is direct platform evidence. Some apps omit the
-            // editable value from their accessibility tree, so a serialized snapshot may remain unchanged.
             return true;
         }
 
@@ -314,15 +300,11 @@ public final class NovaAgentPlanner {
         if (before.isEmpty()) return true;
         if (!after.equals(before)) return true;
 
-        // A click that keeps the same accessibility tree is still potentially valid when the
-        // target is a semantic control that remains visible (tabs, toggles, menus). Do not
-        // manufacture success; require the requested target to be present and actionable.
         if ("click_text".equals(type) && !value.isEmpty()) {
             String a = after.toLowerCase();
             return a.contains(value.toLowerCase()) && (a.contains("clickable=true") || a.contains("focusable=true"));
         }
 
-        // Index clicks cannot be proven from text alone when the tree is unchanged.
         return false;
     }
 
