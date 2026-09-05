@@ -15,7 +15,7 @@ public final class NovaActionSchema {
             "scroll_up", "scroll_down", "swipe_left", "swipe_right",
             "open_url", "open_package", "open_app", "click_text", "click_index",
             "type_text", "press_enter", "search", "read_screen", "screen_observe",
-            "calculate", "web_search", "web_fetch", "web_research", "memory_search", "remember",
+            "web_search", "web_fetch", "web_research", "memory_search", "remember",
             "parallel", "settings", "wait", "none"
     )));
 
@@ -27,7 +27,7 @@ public final class NovaActionSchema {
     )));
 
     private static final Set<String> INFORMATIONAL = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
-            "calculate", "web_search", "web_fetch", "web_research", "screen_observe",
+            "web_search", "web_fetch", "web_research", "screen_observe",
             "read_screen", "memory_search", "remember"
     )));
 
@@ -55,14 +55,13 @@ public final class NovaActionSchema {
             String lower = value.toLowerCase();
             if (!(lower.startsWith("http://") || lower.startsWith("https://"))) return "invalid_url_scheme";
         }
-        if ("calculate".equals(type) && NovaCalculator.calculate(value).isEmpty()) return "invalid_expression";
         return "";
     }
 
     private static boolean requiresNonEmptyValue(String type) {
         switch (type) {
             case "open_url": case "open_package": case "open_app": case "click_text": case "click_index":
-            case "type_text": case "search": case "calculate": case "web_search": case "web_fetch": case "web_research":
+            case "type_text": case "search": case "web_search": case "web_fetch": case "web_research":
             case "memory_search": case "remember": case "parallel": case "wait": return true;
             default: return false;
         }
