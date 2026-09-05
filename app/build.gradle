@@ -18,4 +18,8 @@ android {
 dependencies {
     implementation 'com.google.mediapipe:tasks-vision:0.10.26'
     testImplementation 'junit:junit:4.13.2'
+    // The Android SDK's org.json classes are stubs in local JVM tests; use the real
+    // implementation so schema/agent validation tests execute rather than throw
+    // "Method ... not mocked" runtime failures.
+    testImplementation 'org.json:json:20240303'
 }
