@@ -54,7 +54,6 @@ public final class NovaActionSchema {
         String type = action.optString("type", "").trim().toLowerCase();
         if (!isKnown(type)) return "unknown_action:" + type;
         if ("none".equals(type)) return "";
-        if (!action.has("value")) return "value_missing:" + type;
 
         String value = action.optString("value", "").trim();
         if (requiresNonEmptyValue(type) && value.isEmpty()) return "value_empty:" + type;
