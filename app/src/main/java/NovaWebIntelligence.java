@@ -19,4 +19,6 @@ public final class NovaWebIntelligence{
  private String cleanText(String html){if(html==null)return"";return decodeHtml(html).replaceAll("(?is)<script[^>]*>.*?</script>"," ").replaceAll("(?is)<style[^>]*>.*?</style>"," ").replaceAll("(?is)<noscript[^>]*>.*?</noscript>"," ").replaceAll("<[^>]+>"," ").replaceAll("\\s+"," ").trim();}
  private String decodeHtml(String v){if(v==null)return"";return v.replace("&amp;","&").replace("&quot;","\"").replace("&#39;","'").replace("&apos;","'").replace("&lt;","<").replace("&gt;",">").replace("&nbsp;"," ");}
  private String escape(String v){if(v==null)return"";return v.replace("\\","\\\\").replace("\"","\\\"").replace("\r"," ").replace("\n"," ");}
+ /** No persistent resources are owned by this stateless web client; kept for lifecycle symmetry. */
+ public void shutdown() { }
 }
