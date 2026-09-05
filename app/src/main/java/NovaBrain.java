@@ -403,8 +403,14 @@ public final class NovaBrain {
             }
             for (int i = 0; i < steps.length(); i++) {
                 JSONObject s = steps.optJSONObject(i);
-                if (s == null || !isInformational(s.optString("type", ""))) {
-                    return "{\"ok\":false,\"error\":\"parallel_only_allows_informational_tools\"}";
+                if (s == null) {
+                    return "{\"ok\":false,\"error\":\"parallel_invalid_step\"}";
+                }
+                String type = s.optString("type", "").trim().toLowerCase();
+                String validation = NovaActionSchema.validate(s);
+                if (!NovaActionSchema.isInformational(type) || !NovaActionSchema.canRunInParallel(type) || !validation.isEmpty()) {
+                    return "{\"ok\":false,\"error\":\"parallel_only_allows_valid_informational_tools\",\"detail\":\""
+                            + escape(validation.isEmpty() ? type : validation) + "\"}";
                 }
             }
             JSONArray out = orchestrator.executeParallel(
@@ -445,11 +451,7 @@ public final class NovaBrain {
     }
 
     private boolean isInformational(String t) {
-        return "web_search".equals(t)
-                || "web_fetch".equals(t)
-                || "web_research".equals(t)
-                || "screen_observe".equals(t)
-                || "memory_search".equals(t);
+        return NovaActionSchema.isInformational(t);
     }
 
     private String ok(String payload) {
@@ -498,29 +500,30 @@ public final class NovaBrain {
         return s == null ? "Accessibility service is not connected." : s.getUiSnapshot();
     }
 
-    private void rememberAndReply(String t) {
-        if (t == null || t.trim().isEmpty()) return;
-        memory.remember("assistant", t.trim());
-        reply(t.trim());
+    private void rememberAndReply(String text) {
+        String value = text == null ? "" : text.trim();
+        if (value.isEmpty()) return;
+        memory.remember("assistant", value);
+        reply(value);
     }
 
-    private void status(String t) {
-        if (listener != null && t != null) listener.onStatus(t);
+    private void status(String text) {
+        if (listener != null) main.post(() -> listener.onStatus(text));
     }
 
-    private void reply(String t) {
-        if (listener != null && t != null && !t.trim().isEmpty()) listener.onReply(t.trim());
+    private void reply(String text) {
+        if (listener != null) main.post(() -> listener.onReply(text));
     }
 
-    public synchronized void shutdown() {
-        shutdown = true;
-        generation++;
-        queue.clear();
-        activeGoal = "";
-        processing = false;
-        main.removeCallbacksAndMessages(null);
-        agentExecutor.shutdownNow();
+    public void shutdown() {
+        synchronized (this) {
+            shutdown = true;
+            generation++;
+            queue.clear();
+            activeGoal = "";
+            processing = false;
+        }
         orchestrator.shutdown();
-        ai.shutdown();
+        agentExecutor.shutdownNow();
     }
 }
