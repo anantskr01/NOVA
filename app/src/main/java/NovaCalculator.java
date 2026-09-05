@@ -7,7 +7,7 @@ public final class NovaCalculator {
     public static String calculate(String expression) {
         if (expression == null) return "";
         String s = expression.replace("×", "*").replace("÷", "/").trim();
-        if (s.isEmpty() || !s.matches("[0-9+\\-*/(). %]+")) return "";
+        if (s.isEmpty() || !s.matches("[0-9+\\-*/(). ]+")) return "";
         try {
             double value = new Parser(s).parse();
             if (Double.isNaN(value) || Double.isInfinite(value)) return "";
