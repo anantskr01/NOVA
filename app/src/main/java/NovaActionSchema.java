@@ -16,7 +16,7 @@ public final class NovaActionSchema {
             "open_url", "open_package", "open_app", "click_text", "click_index",
             "type_text", "press_enter", "search", "read_screen", "screen_observe",
             "web_search", "web_fetch", "web_research", "memory_search", "remember",
-            "calculate", "parallel", "settings", "wait", "none"
+            "parallel", "settings", "wait", "none"
     )));
 
     private static final Set<String> UI_MUTATIONS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
@@ -28,21 +28,14 @@ public final class NovaActionSchema {
 
     private static final Set<String> INFORMATIONAL = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
             "web_search", "web_fetch", "web_research", "screen_observe",
-            "read_screen", "memory_search", "remember", "calculate"
+            "read_screen", "memory_search", "remember"
     )));
 
-    public static boolean isKnown(String type) {
-        return type != null && TYPES.contains(type.trim().toLowerCase());
-    }
-    public static boolean isUiMutation(String type) {
-        return type != null && UI_MUTATIONS.contains(type.trim().toLowerCase());
-    }
-    public static boolean isInformational(String type) {
-        return type != null && INFORMATIONAL.contains(type.trim().toLowerCase());
-    }
+    public static boolean isKnown(String type) { return type != null && TYPES.contains(type.trim().toLowerCase()); }
+    public static boolean isUiMutation(String type) { return type != null && UI_MUTATIONS.contains(type.trim().toLowerCase()); }
+    public static boolean isInformational(String type) { return type != null && INFORMATIONAL.contains(type.trim().toLowerCase()); }
     public static boolean canRunInParallel(String type) { return isInformational(type); }
 
-    /** Returns an empty string when valid, otherwise a compact validation error. */
     public static String validate(JSONObject action) {
         if (action == null) return "action_missing";
         String type = action.optString("type", "").trim().toLowerCase();
@@ -55,10 +48,8 @@ public final class NovaActionSchema {
             catch (NumberFormatException e) { return "invalid_index:" + value; }
         }
         if ("wait".equals(type)) {
-            try {
-                long ms = Long.parseLong(value);
-                if (ms < 100 || ms > 2500) return "wait_out_of_range:" + ms;
-            } catch (NumberFormatException e) { return "invalid_wait:" + value; }
+            try { long ms = Long.parseLong(value); if (ms < 100 || ms > 2500) return "wait_out_of_range:" + ms; }
+            catch (NumberFormatException e) { return "invalid_wait:" + value; }
         }
         if ("open_url".equals(type)) {
             String lower = value.toLowerCase();
@@ -69,12 +60,9 @@ public final class NovaActionSchema {
 
     private static boolean requiresNonEmptyValue(String type) {
         switch (type) {
-            case "open_url": case "open_package": case "open_app":
-            case "click_text": case "click_index": case "type_text":
-            case "search": case "web_search": case "web_fetch":
-            case "web_research": case "memory_search": case "remember":
-            case "calculate": case "parallel": case "wait":
-                return true;
+            case "open_url": case "open_package": case "open_app": case "click_text": case "click_index":
+            case "type_text": case "search": case "web_search": case "web_fetch": case "web_research":
+            case "memory_search": case "remember": case "parallel": case "wait": return true;
             default: return false;
         }
     }
