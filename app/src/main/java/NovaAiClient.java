@@ -17,7 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Local/OpenAI-compatible AI client with bounded retry and robust response parsing. */
+/** Local AI client supporting Ollama native and OpenAI-compatible endpoints. */
 public final class NovaAiClient {
     public interface Callback { void onResult(String text); void onError(String message); }
 
@@ -55,8 +55,17 @@ public final class NovaAiClient {
                         String cleanModel = model == null || model.trim().isEmpty() ? "qwen2.5:1.5b" : model.trim();
                         body.put("model", cleanModel);
                         body.put("messages", messages);
-                        body.put("temperature", 0.2);
                         body.put("stream", false);
+
+                        // Ollama native /api/chat expects generation options under "options".
+                        if (isOllamaNativeEndpoint(urlText)) {
+                            JSONObject options = new JSONObject();
+                            options.put("temperature", 0.2);
+                            body.put("options", options);
+                        } else {
+                            // OpenAI-compatible /v1/chat/completions accepts temperature at top level.
+                            body.put("temperature", 0.2);
+                        }
 
                         byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
                         connection.setFixedLengthStreamingMode(bytes.length);
@@ -102,9 +111,18 @@ public final class NovaAiClient {
         if (endpoint == null) return "";
         String value = endpoint.trim().replaceFirst("/+$", "");
         if (value.isEmpty()) return "";
-        if (value.endsWith("/api/chat")) return value;
+
+        // Explicit API paths are respected exactly as entered.
+        if (value.endsWith("/api/chat") || value.endsWith("/v1/chat/completions")) return value;
         if (value.endsWith("/api")) return value + "/chat";
+        if (value.endsWith("/v1")) return value + "/chat/completions";
+
+        // A bare Ollama server URL uses the native chat endpoint.
         return value + "/api/chat";
+    }
+
+    private boolean isOllamaNativeEndpoint(String urlText) {
+        return urlText.endsWith("/api/chat");
     }
 
     private String extractText(JSONObject json) {
