@@ -72,7 +72,7 @@ public final class NovaAssistant {
 
     public void handleVoice(String raw) {
         if (raw == null) return;
-        String text = raw.trim();
+        String text = NovaInputNormalizer.normalize(raw);
         String lower = text.toLowerCase(Locale.ROOT);
         int wake = lower.indexOf(WAKE_PHRASE);
         if (wake >= 0) {
@@ -87,14 +87,13 @@ public final class NovaAssistant {
 
     public void handle(String raw) {
         if (raw == null) return;
-        String command = raw.trim();
+        String command = NovaInputNormalizer.normalize(raw);
         if (command.isEmpty()) return;
         String c = command.toLowerCase(Locale.ROOT);
         status("PROCESSING • " + command);
 
         try {
             // Task controls must be handled before skills or the AI fallback.
-            // This guarantees cancellation never falls through to "AI unavailable".
             if (containsAny(c, "stop nova", "stop listening", "be quiet", "stop speaking")) {
                 if (tts != null) tts.stop();
                 taskManager.cancelAll();
@@ -120,7 +119,6 @@ public final class NovaAssistant {
                 return;
             }
 
-            // Accept both typed IDs (NOVA-T0001) and common voice-recognition variants.
             java.util.regex.Matcher cancelTask = java.util.regex.Pattern.compile(
                     "(?i)^cancel\\s+(?:task\\s+)?(?:nova[- ]?t\\s*[- ]?(\\d{1,6})|nova[- ]?t(\\d{1,6}))\\s*$"
             ).matcher(command);
@@ -149,7 +147,7 @@ public final class NovaAssistant {
             if (containsAny(c, "recent notifications", "read notifications", "what notifications do i have")) { say(NovaNotificationListenerService.snapshot()); return; }
             if (containsAny(c, "open settings", "settings")) { executeLocal("settings", "Opening settings."); return; }
             if (containsAny(c, "open accessibility settings", "accessibility settings")) { launch(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); say("Opening accessibility settings."); return; }
-            if (containsAny(c, "open notification access", "notification access")) { launch(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")); say("Opening notification access."); return; }
+            if (containsAny(c, "open notification access", "notification access")) { launch(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")); say("Opening notification access settings."); return; }
             if (containsAny(c, "list apps", "show my apps", "what apps do i have")) { say(apps.launchableSummary(35)); return; }
 
             if (c.startsWith("search for ") || c.startsWith("search ") || c.startsWith("google ")) {
