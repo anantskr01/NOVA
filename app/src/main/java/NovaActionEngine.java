@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.provider.Settings;
+import org.json.JSONObject;
 
 /** Central, permission-aware action layer used by voice, text and AI plans. */
 public final class NovaActionEngine {
@@ -27,6 +28,15 @@ public final class NovaActionEngine {
     public boolean execute(String type, String value) {
         String action = type == null ? "none" : type.trim().toLowerCase();
         try {
+            JSONObject request = new JSONObject()
+                    .put("type", action)
+                    .put("value", value == null ? "" : value);
+            String validation = NovaActionSchema.validate(request);
+            if (!validation.isEmpty()) {
+                if (callback != null) callback.status("ACTION BLOCKED • " + validation);
+                return false;
+            }
+
             switch (action) {
                 case "home": return global(AccessibilityService.GLOBAL_ACTION_HOME);
                 case "back": return global(AccessibilityService.GLOBAL_ACTION_BACK);
@@ -48,12 +58,10 @@ public final class NovaActionEngine {
                 case "press_enter":
                     return pressEnter();
                 case "search":
-                    if (value == null || value.trim().isEmpty()) return false;
                     return openWebUrl("https://www.google.com/search?q=" + Uri.encode(value.trim()));
                 case "open_url":
                     return openWebUrl(value);
                 case "open_package":
-                    if (value == null || value.trim().isEmpty()) return false;
                     Intent pkg = context.getPackageManager().getLaunchIntentForPackage(value.trim());
                     if (pkg == null) return false;
                     launch(pkg);
@@ -68,7 +76,9 @@ public final class NovaActionEngine {
                     launch(new Intent(Settings.ACTION_SETTINGS));
                     return true;
                 case "none":
+                    return true;
                 default:
+                    if (callback != null) callback.status("ACTION BLOCKED • unknown_action:" + action);
                     return false;
             }
         } catch (Exception e) {
