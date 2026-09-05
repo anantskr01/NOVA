@@ -1,7 +1,5 @@
 package com.aircontrol;
 
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -23,7 +21,6 @@ abstract class NovaHttpAiProvider implements NovaAiProvider {
     private static final int READ_TIMEOUT_MS = 90000;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private final Handler main = new Handler(Looper.getMainLooper());
 
     protected abstract String buildUrl(String endpoint);
     protected abstract JSONObject buildRequest(String model, JSONArray messages) throws Exception;
@@ -31,6 +28,7 @@ abstract class NovaHttpAiProvider implements NovaAiProvider {
 
     @Override
     public final void chat(String endpoint, String apiKey, String model, JSONArray messages, Callback callback) {
+        if (callback == null) return;
         executor.execute(() -> {
             String lastError = "AI request failed";
             for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -69,8 +67,7 @@ abstract class NovaHttpAiProvider implements NovaAiProvider {
                         if (text == null || text.trim().isEmpty()) {
                             throw new IllegalStateException("AI returned no text: " + compact(response));
                         }
-                        String finalText = text.trim();
-                        main.post(() -> callback.onResult(finalText));
+                        callback.onResult(text.trim());
                         return;
                     } finally {
                         connection.disconnect();
@@ -86,8 +83,7 @@ abstract class NovaHttpAiProvider implements NovaAiProvider {
                 try { Thread.sleep(400L * attempt); }
                 catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); break; }
             }
-            final String error = lastError + " Check the configured provider, endpoint, credentials, and network connection.";
-            main.post(() -> callback.onError(error));
+            callback.onError(lastError + " Check the configured provider, endpoint, credentials, and network connection.");
         });
     }
 
