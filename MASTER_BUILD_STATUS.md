@@ -1,26 +1,45 @@
 # NOVA Master Build Status
 
-## Completed in this milestone
+## Master Build v1 — implementation status
 
-- Created provider-neutral `NovaAiProvider` contract.
-- Added shared HTTP provider transport with bounded retries/timeouts.
-- Added native Ollama provider adapter.
-- Added OpenAI-compatible provider adapter.
-- Added `NovaAiProviderManager`; `NovaAiClient` remains as the compatibility facade, so existing Brain code does not need a provider-specific rewrite.
-- Added language-agnostic input normalization at the assistant boundary.
-- Removed wording-specific arithmetic interception from `NovaSkillRegistry`, so open-ended questions such as contractions are handed to the universal Brain path.
-- Added a safe deterministic arithmetic primitive and exposed `calculate` in the canonical action/tool schema for future planner use.
-- Added JVM regression tests for the arithmetic primitive.
-- Added a dedicated master verification CI workflow.
+The `feature/nova-master-build` branch now contains the core agent architecture without rewriting the existing MediaPipe gesture or Android Accessibility implementation.
 
-## Verification boundary
+### Completed
 
-GitHub Actions can compile and run JVM tests. Physical Android behavior still needs device verification for accessibility, MediaPipe, microphone/camera, and LAN AI connectivity.
+- Provider-neutral `NovaAiProvider` contract with Ollama and OpenAI-compatible adapters.
+- Bounded HTTP transport with timeouts/retries and provider health probing/failure classification.
+- LAN Ollama remains supported; no silent cloud fallback is introduced.
+- Unicode/whitespace input normalization at the assistant boundary; wording-specific arithmetic interception was removed from the skill router.
+- Canonical action schema validation and registered-tool enforcement.
+- Agent loop with bounded turns, observe → act → verify behavior, recovery and replanning.
+- Semantic UI targeting through Accessibility observations, with post-mutation verification.
+- Parallel execution restricted to validated informational tools; Android UI mutations are not parallelized.
+- Persistent task lifecycle with queued/running/paused/needs-user/completed/failed/cancelled states, priorities, bounded queueing, checkpoints, startup recovery, pause/resume and explicit Brain outcomes.
+- Layered local memory for short-term, long-term/semantic, episodic and task records with bounded retrieval and deduplication of durable fact keys.
+- Public web search/fetch capability with bounded output, redirects and private-network URL rejection.
+- Structured diagnostics for goal/provider/plan/action/tool/verification/recovery/outcome lifecycle events, with basic credential redaction.
+- JVM regression coverage for natural-language normalization, provider routing and action-schema validation.
+- Master CI verifies JVM tests and Android debug APK assembly.
+- Obsolete self-modifying safe-fix workflow is not part of the master branch.
 
-## Next architecture milestones
+### Deliberate boundaries
 
-1. Integrate informational tool execution for `calculate` directly into `NovaBrain` without bypassing validation.
-2. Replace task-manager in-memory state with persistent task records and explicit PAUSED/NEEDS_USER/FAILED states.
-3. Introduce structured agent events and diagnostics.
-4. Expand provider capability metadata and explicit user-selected fallback policy.
-5. Improve web research from single search calls to bounded multi-source synthesis.
+NOVA does not pretend to have capabilities that Android has not granted. Credential-sensitive or destructive operations require an explicit safety policy/gate before such tools are exposed. Background execution remains subject to Android service/process limits.
+
+The existing camera → MediaPipe → gesture engine → Accessibility dispatch path remains protected and was not rewritten as part of the master-agent work.
+
+### Verification boundary
+
+GitHub Actions can compile the application, run JVM tests and assemble the debug APK. Physical device verification is still required for real Android behavior including Accessibility permissions, MediaPipe/camera tracking, microphone/voice lifecycle, gesture scrolling, app launching, notification/quick-settings interaction and LAN Ollama connectivity.
+
+### Remaining acceptance work
+
+1. Run the full physical-device regression suite on the connected Android device.
+2. Exercise multi-step browser/UI goals end-to-end and confirm semantic verification on real accessibility trees.
+3. Validate voice → Brain → tool → result → TTS on-device, including the previously observed microphone lifecycle issue.
+4. Validate persistent task recovery across real app/process restarts.
+5. Expand web research into a richer multi-source synthesis pipeline before calling that feature fully complete.
+
+## Definition of Done
+
+**UNDERSTOOD → PLANNED → EXECUTED → OBSERVED → VERIFIED → RECOVERABLE → TESTED**
