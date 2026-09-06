@@ -23,7 +23,7 @@ public final class NovaMemory {
     public NovaMemory(Context c) { prefs = c.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE); }
 
     public synchronized void remember(String role, String text) {
-        if (text == null || text.trim().isEmpty()) return;
+        if (text == null || text.trim().isEmpty() || !isSafeToPersist("history", text)) return;
         JSONArray h = read(HISTORY); try { h.put(entry(role == null ? "user" : role, bounded(text.trim(), MAX_FACT_LENGTH * 2))); } catch (JSONException ignored) { }
         trim(h, MAX_MESSAGES); save(HISTORY, h);
     }
@@ -68,7 +68,7 @@ public final class NovaMemory {
     public synchronized JSONArray tasks() { return read(TASKS); }
     public synchronized void clear() { prefs.edit().remove(HISTORY).remove(FACTS).remove(EPISODES).remove(TASKS).apply(); }
 
-    /** Reject common credential/token material from durable memory even if a model asks to save it. */
+    /** Reject common credential/token material from every persistent memory layer. */
     public static boolean isSafeToPersist(String key, String value) {
         String k = key == null ? "" : key.toLowerCase(Locale.ROOT); String v = value == null ? "" : value.trim();
         if (k.matches(".*(password|passwd|secret|token|api[_ -]?key|authorization|credential|private[_ -]?key).*")) return false;
