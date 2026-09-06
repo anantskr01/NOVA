@@ -100,7 +100,7 @@ public final class NovaBrain {
             StringBuilder contextText=new StringBuilder("Relevant saved NOVA memory:\n").append(memory.searchFacts(goal,MAX_RELEVANT_FACTS)).append("\n\nCurrent UI state:\n").append(NovaAgentPolicy.bounded(getUiSnapshot(),NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));
             if(!feedback.isEmpty())contextText.append("\n\nPrevious tool/execution evidence:\n").append(NovaAgentPolicy.bounded(feedback,NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));
             messages.put(new JSONObject().put("role","system").put("content",NovaAgentPolicy.bounded(contextText.toString(),NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)));
-            JSONArray history=memory.recent();int start=Math.max(0,history.length()-NovaAgentPolicy.MAX_CONTEXT_ITEMS);for(int i=start;i<history.length();i++){JSONObject item=history.optJSONObject(i);if(item!=null)messages.put(item);}
+            JSONArray history=memory.recent();int start=Math.max(0,history.length()-NovaAgentPolicy.MAX_CONTEXT_ITEMS);for(int i=start;i<history.length();i++){JSONObject item=history.optJSONObject(i);if(item!=null)messages.put(sanitizeMemoryForModel(item));}
             String endpoint=getEndpoint(); String provider=ai.providerId(endpoint); NovaDiagnostics.event("provider_selected", provider); status("BRAIN • PROVIDER " + provider);
             ai.chat(endpoint,secureStore.getApiKey(),getModel(),messages,new NovaAiClient.Callback(){
                 public void onResult(final String text){agentExecutor.execute(()->{
@@ -111,14 +111,42 @@ public final class NovaBrain {
                     if(!r.toolResults.isEmpty()){
                         NovaDiagnostics.event("tool_executed", "results_present");
                         notifyGoalProgress(goal,turn,"verified_tools="+countToolResults(r.toolResults));
-                        main.post(()->askAi(goal,0,r.toolResults,token,turn+1,goalStarted));return;
+                        main.post(()->askAi(goal,0,sanitizeModelFeedback(r.toolResults),token,turn+1,goalStarted));return;
                     }
                     if(r.completed){if(prematureCompletion(goal,r.finalScreen)){NovaDiagnostics.event("verification_failed", "premature_completion");main.post(()->askAi(goal,0,"NOVA must not claim this goal is complete yet. Re-observe the UI and continue with the next necessary action. Current UI:\n"+NovaAgentPolicy.bounded(r.finalScreen,NovaAgentPolicy.MAX_TOOL_RESULT_CHARS),token,turn+1,goalStarted));return;}if(!r.say.isEmpty())rememberAndReply(r.say);finishGoal(token,OUTCOME_SUCCESS,r.say);return;}
                     if(recoveryAttempt<1){NovaDiagnostics.event("recovery", "failed_action");String failure="Failed action: "+r.failedAction+"\nObserved UI after failure:\n"+r.finalScreen;main.post(()->askAi(goal,recoveryAttempt+1,failure,token,turn+1,goalStarted));}else{String message=r.failedAction.isEmpty()?"I couldn't complete that task safely.":"I couldn't complete the task safely at: "+r.failedAction+".";rememberAndReply(message);finishGoal(token,OUTCOME_FAILED,message);}
                 });}
-                public void onError(String message){synchronized(NovaBrain.this){if(shutdown||token!=generation)return;}String kind=NovaAiProviderManager.classifyFailure(message);NovaDiagnostics.event("provider_failure", kind);String replyText="My AI core is unavailable right now. "+message;rememberAndReply(replyText);finishGoal(token,OUTCOME_FAILED,replyText);}
+                public void onError(String message){synchronized(NovaBrain.this){if(shutdown||token!=generation)return;}String kind=NovaAiProviderManager.classifyFailure(message);NovaDiagnostics.event("provider_failure", kind);String replyText="My AI core is unavailable right now. "+NovaDiagnostics.compact(message);rememberAndReply(replyText);finishGoal(token,OUTCOME_FAILED,replyText);}
             });
         }catch(Exception e){Log.e(TAG,"AI REQUEST PREPARATION ERROR",e);NovaDiagnostics.event("goal_failure", "request_preparation");String message="I couldn't prepare the AI request.";rememberAndReply(message);finishGoal(token,OUTCOME_FAILED,message);}
+    }
+
+    private JSONObject sanitizeMemoryForModel(JSONObject item) {
+        try {
+            JSONObject out = new JSONObject(item.toString());
+            if ("type_text".equalsIgnoreCase(out.optString("tool", ""))) out.put("value", "[REDACTED_INPUT]");
+            String content = out.optString("content", "");
+            if (!content.isEmpty()) out.put("content", NovaDiagnostics.compact(content));
+            return out;
+        } catch (Exception e) { return new JSONObject(); }
+    }
+
+    private String sanitizeModelFeedback(String raw) {
+        if (raw == null || raw.isEmpty()) return "";
+        try {
+            JSONArray in = new JSONArray(raw), out = new JSONArray();
+            for (int i = 0; i < in.length(); i++) {
+                JSONObject item = in.optJSONObject(i);
+                if (item == null) continue;
+                JSONObject copy = new JSONObject(item.toString());
+                if ("type_text".equalsIgnoreCase(copy.optString("tool", ""))) copy.put("value", "[REDACTED_INPUT]");
+                copy.put("before", NovaDiagnostics.compact(copy.optString("before", "")));
+                copy.put("after", NovaDiagnostics.compact(copy.optString("after", "")));
+                copy.put("result", NovaDiagnostics.compact(copy.optString("result", "")));
+                out.put(copy);
+            }
+            return out.toString();
+        } catch (Exception e) { return NovaDiagnostics.compact(raw); }
     }
 
     private int countToolResults(String raw){try{return new JSONArray(raw).length();}catch(Exception e){return raw==null||raw.trim().isEmpty()?0:1;}}
@@ -128,7 +156,7 @@ public final class NovaBrain {
 
     private boolean prematureCompletion(String goal,String screen){String g=goal==null?"":goal.trim().toLowerCase();String s=screen==null?"":screen.trim().toLowerCase();if(g.isEmpty()||s.isEmpty())return false;if(g.matches(".*\\b(search|find|look up)\\b.*")){String phrase=extractSearchPhrase(g);if(!phrase.isEmpty()){String[] tokens=phrase.split("\\s+");int meaningful=0,matched=0;for(String token:tokens){String t=token.replaceAll("[^a-z0-9]","");if(t.length()<4)continue;meaningful++;if(s.contains(t))matched++;}if(meaningful>1&&matched<meaningful)return true;if(meaningful==1&&matched==0)return true;}}return false;}
     private String extractSearchPhrase(String goal){String g=goal==null?"":goal.toLowerCase().replaceAll("[?.!]"," ");java.util.regex.Matcher m=java.util.regex.Pattern.compile("\\b(?:search(?: for)?|find|look up)\\s+(.+?)(?:\\s+(?:on|in|using)\\s+.+)?$").matcher(g);return m.find()?m.group(1).trim():"";}
-    private String executeIntelligenceTool(String type,String value){try{if("web_search".equals(type))return ok(web.search(value,5));if("web_fetch".equals(type))return ok(web.fetch(value));if("web_research".equals(type))return ok(web.search(value,6));if("screen_observe".equals(type)||"read_screen".equals(type))return "{\"ok\":true,\"text\":\""+escape(NovaAgentPolicy.bounded(getUiSnapshot(),NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))+"\"}";if("memory_search".equals(type))return "{\"ok\":true,\"facts\":"+memory.searchFacts(value,8)+"}";if("remember".equals(type)){JSONObject o=new JSONObject(value);String k=o.optString("key","").trim(),v=o.optString("value","").trim();if(k.isEmpty()||v.isEmpty())return "{\"ok\":false,\"error\":\"key_and_value_required\"}";memory.rememberFact(k,v);return "{\"ok\":true,\"saved\":true}";}return "{\"ok\":false,\"error\":\"unknown_intelligence_tool\"}";}catch(Exception e){return "{\"ok\":false,\"error\":\""+escape(e.getMessage()==null?"tool_failed":e.getMessage())+"\"}";}}
+    private String executeIntelligenceTool(String type,String value){try{if("web_search".equals(type))return ok(web.search(value,5));if("web_fetch".equals(type))return ok(web.fetch(value));if("web_research".equals(type))return ok(web.research(value,3));if("screen_observe".equals(type)||"read_screen".equals(type))return "{\"ok\":true,\"text\":\""+escape(NovaAgentPolicy.bounded(getUiSnapshot(),NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))+"\"}";if("memory_search".equals(type))return "{\"ok\":true,\"memory\":"+memory.searchMemory(value,8)+"}";if("remember".equals(type)){JSONObject o=new JSONObject(value);String k=o.optString("key","").trim(),v=o.optString("value","").trim();if(k.isEmpty()||v.isEmpty())return "{\"ok\":false,\"error\":\"key_and_value_required\"}";if(!NovaMemory.isSafeToPersist(k,v))return "{\"ok\":false,\"error\":\"sensitive_memory_rejected\"}";memory.rememberFact(k,v);return "{\"ok\":true,\"saved\":true}";}return "{\"ok\":false,\"error\":\"unknown_intelligence_tool\"}";}catch(Exception e){return "{\"ok\":false,\"error\":\""+escape(NovaDiagnostics.compact(e.getMessage()==null?"tool_failed":e.getMessage()))+"\"}";}}
     private String executeParallelTools(String value){try{JSONArray steps=new JSONArray(value);if(steps.length()==0||steps.length()>NovaAgentPolicy.MAX_STEPS)return "{\"ok\":false,\"error\":\"parallel_step_limit\"}";for(int i=0;i<steps.length();i++){JSONObject s=steps.optJSONObject(i);if(s==null)return "{\"ok\":false,\"error\":\"parallel_invalid_step\"}";String type=s.optString("type","").trim().toLowerCase();String validation=NovaActionSchema.validate(s);if(!NovaActionSchema.isInformational(type)||!NovaActionSchema.canRunInParallel(type)||!validation.isEmpty())return "{\"ok\":false,\"error\":\"parallel_only_allows_valid_informational_tools\",\"detail\":\""+escape(validation.isEmpty()?type:validation)+"\"}";}JSONArray out=orchestrator.executeParallel(toOrchestratorSteps(steps),(tool,input)->executeToolJson(tool,input));return "{\"ok\":true,\"parallel_results\":"+out+"}";}catch(Exception e){return "{\"ok\":false,\"error\":\"parallel_failed\"}";}}
     private JSONArray toOrchestratorSteps(JSONArray source)throws Exception{JSONArray out=new JSONArray();for(int i=0;i<source.length();i++){JSONObject s=source.optJSONObject(i);if(s!=null)out.put(new JSONObject().put("id",s.optString("id",String.valueOf(i))).put("tool",s.optString("type","")).put("input",new JSONObject().put("value",s.optString("value",""))));}return out;}
     private JSONObject executeToolJson(String tool,JSONObject input){try{return new JSONObject(executeIntelligenceTool(tool,input==null?"":input.optString("value","")));}catch(Exception e){try{return new JSONObject().put("ok",false).put("error","tool_failed");}catch(Exception ignored){return new JSONObject();}}}
