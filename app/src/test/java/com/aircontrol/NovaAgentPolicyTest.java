@@ -9,6 +9,7 @@ import static org.junit.Assert.assertTrue;
 public class NovaAgentPolicyTest {
     @Test public void allowsKnownSafeActions() {
         assertEquals(NovaAgentPolicy.Decision.ALLOW, NovaAgentPolicy.evaluateAction("home", ""));
+        assertEquals(NovaAgentPolicy.Decision.ALLOW, NovaAgentPolicy.evaluateAction("web_search", "android accessibility"));
         assertEquals(NovaAgentPolicy.Decision.ALLOW, NovaAgentPolicy.evaluateAction("open_url", "https://example.com"));
     }
 
@@ -29,5 +30,12 @@ public class NovaAgentPolicyTest {
         assertTrue(NovaAgentPolicy.looksCredentialLike("authorization: bearer abcdefgh"));
         assertTrue(NovaAgentPolicy.looksCredentialLike("sk-abcdefghijklmnop"));
         assertFalse(NovaAgentPolicy.looksCredentialLike("Use dark mode"));
+    }
+
+    @Test public void parallelPolicyOnlyAllowsInformationalPayloads() {
+        assertEquals(NovaAgentPolicy.Decision.ALLOW,
+                NovaAgentPolicy.evaluateAction("parallel", "[ {\"type\":\"web_search\",\"value\":\"test\"} ]"));
+        assertEquals(NovaAgentPolicy.Decision.BLOCK,
+                NovaAgentPolicy.evaluateAction("parallel", "[ {\"type\":\"home\",\"value\":\"\"} ]"));
     }
 }
