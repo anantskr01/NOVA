@@ -24,7 +24,15 @@ public final class NovaActionEngine {
         String action = type == null ? "none" : type.trim().toLowerCase(Locale.ROOT);
         NovaDiagnostics.event("action_requested", action);
         try {
-            JSONObject request = new JSONObject().put("type", action).put("value", value == null ? "" : value);
+            String rawValue = value == null ? "" : value;
+            NovaAgentPolicy.Decision policy = NovaAgentPolicy.evaluateAction(action, rawValue);
+            if (policy != NovaAgentPolicy.Decision.ALLOW) {
+                String reason = policy == NovaAgentPolicy.Decision.REQUIRE_CONFIRMATION ? "confirmation_required" : "policy_blocked";
+                NovaDiagnostics.event("action_blocked", action + " " + reason);
+                if (callback != null) callback.status("ACTION BLOCKED • " + reason);
+                return false;
+            }
+            JSONObject request = new JSONObject().put("type", action).put("value", rawValue);
             String validation = NovaActionSchema.validate(request);
             if (!validation.isEmpty()) {
                 NovaDiagnostics.event("action_validated", action + " blocked=" + validation);
@@ -44,18 +52,18 @@ public final class NovaActionEngine {
                 case "swipe_left": result = swipe("left"); break;
                 case "swipe_right": result = swipe("right"); break;
                 case "wait":
-                    long delay; try { delay = Long.parseLong(value == null ? "500" : value.trim()); } catch (NumberFormatException ignored) { delay = 500L; }
+                    long delay; try { delay = Long.parseLong(rawValue.trim()); } catch (NumberFormatException ignored) { delay = 500L; }
                     SystemClock.sleep(Math.max(100L, Math.min(delay, 2500L))); result = true; break;
-                case "type_text": result = typeText(value); break;
+                case "type_text": result = typeText(rawValue); break;
                 case "press_enter": result = pressEnter(); break;
-                case "search": result = openWebUrl("https://www.google.com/search?q=" + Uri.encode(value.trim())); break;
-                case "open_url": result = openWebUrl(value); break;
+                case "search": result = openWebUrl("https://www.google.com/search?q=" + Uri.encode(rawValue.trim())); break;
+                case "open_url": result = openWebUrl(rawValue); break;
                 case "open_package":
-                    Intent pkg = context.getPackageManager().getLaunchIntentForPackage(value.trim());
+                    Intent pkg = context.getPackageManager().getLaunchIntentForPackage(rawValue.trim());
                     if (pkg == null) result = false; else { launch(pkg); result = true; }
                     break;
                 case "open_app":
-                    android.content.pm.ResolveInfo info = apps.resolve(value); Intent appIntent = apps.launchIntent(info);
+                    android.content.pm.ResolveInfo info = apps.resolve(rawValue); Intent appIntent = apps.launchIntent(info);
                     if (appIntent == null) result = false; else { launch(appIntent); result = true; }
                     break;
                 case "settings": launch(new Intent(Settings.ACTION_SETTINGS)); result = true; break;
@@ -100,9 +108,8 @@ public final class NovaActionEngine {
     }
 
     private boolean openWebUrl(String raw) {
-        if (raw == null || raw.trim().isEmpty()) return false;
-        String value = raw.trim(); Uri uri = Uri.parse(value).normalizeScheme(); String scheme = uri.getScheme();
-        if (!("http".equals(scheme) || "https".equals(scheme))) { NovaDiagnostics.event("action_blocked", "url_scheme"); if (callback != null) callback.status("ACTION BLOCKED • URL SCHEME"); return false; }
+        if (!NovaAgentPolicy.isWebUrl(raw)) { NovaDiagnostics.event("action_blocked", "url_scheme"); if (callback != null) callback.status("ACTION BLOCKED • URL SCHEME"); return false; }
+        String value = raw.trim(); Uri uri = Uri.parse(value).normalizeScheme();
         Intent intent = new Intent(Intent.ACTION_VIEW, uri);
         if (intent.resolveActivity(context.getPackageManager()) == null) { NovaDiagnostics.event("action_failed", "no_browser"); if (callback != null) callback.status("ACTION FAILED • NO BROWSER"); return false; }
         launch(intent); return true;
