@@ -37,5 +37,9 @@ public class NovaAgentPolicyTest {
                 NovaAgentPolicy.evaluateAction("parallel", "[ {\"type\":\"web_search\",\"value\":\"test\"} ]"));
         assertEquals(NovaAgentPolicy.Decision.BLOCK,
                 NovaAgentPolicy.evaluateAction("parallel", "[ {\"type\":\"home\",\"value\":\"\"} ]"));
+        assertEquals(NovaAgentPolicy.Decision.BLOCK,
+                NovaAgentPolicy.evaluateAction("parallel", "[ {\"type\":\"remember\",\"value\":\"{\\\"key\\\":\\\"x\\\",\\\"value\\\":\\\"y\\\"}\"} ]"));
+        assertEquals(NovaAgentPolicy.Decision.BLOCK,
+                NovaAgentPolicy.evaluateAction("parallel", "not-json"));
     }
 }
