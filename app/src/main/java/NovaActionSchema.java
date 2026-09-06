@@ -77,7 +77,9 @@ public final class NovaActionSchema {
                     if (step == null) return "parallel_invalid_step:" + i;
                     String nested = validate(step);
                     if (!nested.isEmpty()) return "parallel_invalid_step:" + i + ":" + nested;
-                    if (!canRunInParallel(step.optString("type", ""))) return "parallel_mutation_forbidden:" + i;
+                    if (!canRunInParallel(step.optString("type", ""))) {
+                        return "parallel_invalid_step:" + i + ":parallel_mutation_forbidden";
+                    }
                 }
             } catch (Exception e) { return "parallel_invalid_json"; }
         }
