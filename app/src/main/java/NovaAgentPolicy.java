@@ -1,5 +1,7 @@
 package com.aircontrol;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
 import java.util.Locale;
 
 /** Central safety/resource policy for every agent action. */
@@ -24,15 +26,34 @@ public final class NovaAgentPolicy {
         return value.substring(0, max);
     }
 
-    /** Central gate: unknown, malformed, and sensitive actions fail closed. */
+    /** Central gate: unknown, malformed, conflicting, and sensitive actions fail closed. */
     public static Decision evaluateAction(String type, String value) {
         String action = type == null ? "" : type.trim().toLowerCase(Locale.ROOT);
         String v = value == null ? "" : value.trim();
         if (action.isEmpty() || !NovaActionSchema.isKnown(action)) return Decision.BLOCK;
         if (v.length() > 4096) return Decision.BLOCK;
         if ("open_url".equals(action) && !isWebUrl(v)) return Decision.BLOCK;
+        if ("parallel".equals(action) && !parallelIsInformational(v)) return Decision.BLOCK;
         if ("type_text".equals(action) && looksCredentialLike(v)) return Decision.REQUIRE_CONFIRMATION;
         return Decision.ALLOW;
+    }
+
+    /** Parallel execution is reserved for independent read-only/informational tools. */
+    private static boolean parallelIsInformational(String value) {
+        try {
+            JSONArray steps = new JSONArray(value);
+            if (steps.length() == 0 || steps.length() > MAX_STEPS) return false;
+            for (int i = 0; i < steps.length(); i++) {
+                JSONObject step = steps.optJSONObject(i);
+                if (step == null) return false;
+                String type = NovaActionSchema.normalizeType(step.optString("type", ""));
+                if (!NovaActionSchema.isKnown(type) || !NovaActionSchema.canRunInParallel(type)) return false;
+                if (!NovaActionSchema.validate(step).isEmpty()) return false;
+            }
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     public static boolean requiresConfirmation(String type, String value) {
@@ -48,7 +69,7 @@ public final class NovaAgentPolicy {
     public static boolean looksCredentialLike(String value) {
         if (value == null) return false;
         String v = value.trim();
-        return v.matches("(?is).*\\b(bearer\\s+[A-Za-z0-9._~+/=-]{8,}|api[_ -]?key\\s*[:=]\\s*\\S+|password\\s*[:=]\\s*\\S+|passwd\\s*[:=]\\s*\\S+|authorization\\s*[:=]\\s*\\S+|private[_ -]?key\\s*[:=]\\s*\\S+).*" )
+        return v.matches("(?is).*\\b(bearer\\s+[A-Za-z0-9._~+/=-]{8,}|api[_ -]?key\\s*[:=]\\s*\\S+|password\\s*[:=]\\s*\\S+|passwd\\s*[:=]\\s*\\S+|authorization\\s*[:=]\\s*\\S+|private[_ -]?key\\s*[:=]\\s*\\S+).*")
                 || v.matches("(?is).*\\bsk-[A-Za-z0-9_-]{16,}.*")
                 || v.matches("(?is).*\\bAIza[0-9A-Za-z_-]{20,}.*");
     }
