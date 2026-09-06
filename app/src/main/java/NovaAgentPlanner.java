@@ -13,6 +13,7 @@ public final class NovaAgentPlanner {
     private static final long VERIFY_DELAY_MS = 450L;
     private static final long RETRY_DELAY_MS = 350L;
     private static final int MAX_SCREEN_CHARS = 5000;
+    private static final String REDACTED_INPUT = "[REDACTED_INPUT]";
 
     public static final class ExecutionResult {
         public final boolean planValid;
@@ -89,6 +90,7 @@ public final class NovaAgentPlanner {
             }
 
             listener.status("AGENT • OBSERVE → UNDERSTAND → ACT → VERIFY");
+            NovaDiagnostics.event("observation", "initial_ui_state");
             List<String> failures = new ArrayList<>();
             JSONArray outputs = new JSONArray();
             String previous = screen();
@@ -123,6 +125,7 @@ public final class NovaAgentPlanner {
                 String before = screen();
                 String beforePackage = safePackage();
                 listener.status("AGENT • STEP " + (i + 1) + "/" + actions.length() + " • OBSERVE");
+                NovaDiagnostics.event("observation", "step=" + (i + 1) + ",tool=" + type);
                 listener.status("AGENT • STEP " + (i + 1) + "/" + actions.length() + " • ACT • " + type);
                 NovaDiagnostics.event("action_validated", type);
 
@@ -141,6 +144,7 @@ public final class NovaAgentPlanner {
                     failures.add(type);
                     listener.status("AGENT • RECOVERY NEEDED • " + type);
                     NovaDiagnostics.event("action_failed", type);
+                    NovaDiagnostics.event("replan", "action_failed=" + type);
                     break;
                 }
 
@@ -152,6 +156,7 @@ public final class NovaAgentPlanner {
 
                 if ("wait".equals(type)) {
                     String waited = screen();
+                    NovaDiagnostics.event("observation", "after_wait");
                     addResult(outputs, i, type, value, output, before, waited, true, beforePackage, safePackage());
                     previous = waited;
                     previousPackage = safePackage();
@@ -160,6 +165,7 @@ public final class NovaAgentPlanner {
 
                 String after = screen();
                 String afterPackage = safePackage();
+                NovaDiagnostics.event("observation", "after=" + type);
                 boolean verified = !needsVerification(type)
                         || verificationPassed(type, value, before, after, beforePackage, afterPackage);
 
@@ -168,6 +174,7 @@ public final class NovaAgentPlanner {
                     SystemClock.sleep(VERIFY_DELAY_MS);
                     String retry = screen();
                     String retryPackage = safePackage();
+                    NovaDiagnostics.event("observation", "verification_retry=" + type);
                     verified = verificationPassed(type, value, before, retry, beforePackage, retryPackage);
                     if (verified) {
                         after = retry;
@@ -181,6 +188,7 @@ public final class NovaAgentPlanner {
                     failures.add(type + "_verification");
                     listener.status("AGENT • RECOVERY • STEP NOT CONFIRMED");
                     NovaDiagnostics.event("verification_failed", type);
+                    NovaDiagnostics.event("replan", "verification_failed=" + type);
                     break;
                 }
 
@@ -192,6 +200,7 @@ public final class NovaAgentPlanner {
                 // Exactly one Android UI mutation per reasoning turn. NovaBrain receives the
                 // fresh observation and asks the model what should happen next.
                 listener.status("AGENT • STATE OBSERVED • NEXT REASONING TURN");
+                NovaDiagnostics.event("replan", "verified=" + type + ",next_reasoning_turn");
                 return result(true, false, 0, "", screen(), "", outputs.toString());
             }
 
@@ -252,17 +261,26 @@ public final class NovaAgentPlanner {
     private void addResult(JSONArray array, int index, String type, String value, String output,
                            String before, String after, boolean verified,
                            String beforePackage, String afterPackage) throws Exception {
+        String safeValue = "type_text".equals(type) ? REDACTED_INPUT : value;
+        String safeBefore = redactInput(type, value, before);
+        String safeAfter = redactInput(type, value, after);
+        String safeOutput = redactInput(type, value, output);
         array.put(new JSONObject()
                 .put("step", index + 1)
                 .put("tool", type)
-                .put("value", value)
+                .put("value", safeValue)
                 .put("ok", outputOk(output))
                 .put("verified", verified)
                 .put("beforePackage", beforePackage == null ? "" : beforePackage)
                 .put("afterPackage", afterPackage == null ? "" : afterPackage)
-                .put("before", NovaAgentPolicy.bounded(before == null ? "" : before, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))
-                .put("after", NovaAgentPolicy.bounded(after == null ? "" : after, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))
-                .put("result", NovaAgentPolicy.bounded(output == null ? "" : output, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)));
+                .put("before", NovaAgentPolicy.bounded(safeBefore == null ? "" : safeBefore, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))
+                .put("after", NovaAgentPolicy.bounded(safeAfter == null ? "" : safeAfter, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))
+                .put("result", NovaAgentPolicy.bounded(safeOutput == null ? "" : safeOutput, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)));
+    }
+
+    private String redactInput(String type, String value, String text) {
+        if (text == null || text.isEmpty() || !"type_text".equals(type) || value == null || value.isEmpty()) return text;
+        return text.replace(value, REDACTED_INPUT);
     }
 
     private boolean shouldRetry(String type) {
@@ -301,18 +319,12 @@ public final class NovaAgentPlanner {
             String target = value.toLowerCase();
             String b = before.toLowerCase();
             String a = after.toLowerCase();
-            // A changed screen is not sufficient by itself when the intended target remains
-            // completely untouched. Accept a target disappearance/change, focus/state evidence,
-            // or a package transition as concrete UI evidence.
             boolean targetChanged = b.contains(target) && !a.contains(target);
             boolean stateEvidence = a.contains("focused=true") || a.contains("selected=true")
                     || a.contains("checked=true") || a.contains("enabled=false");
             return targetChanged || stateEvidence || !afterPackage.equals(beforePackage);
         }
 
-        // For scrolling/swiping and other UI mutations, require an observable accessibility or
-        // package-state change. At an unchanged edge, verification fails and Brain gets a chance
-        // to recover instead of falsely claiming the gesture worked.
         return !after.equals(before) || !afterPackage.equals(beforePackage);
     }
 
