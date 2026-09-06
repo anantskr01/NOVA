@@ -77,7 +77,7 @@ public final class NovaAgentPlanner {
                 boolean verified=!needsVerification(type)||verificationPassed(type,value,before,after,beforePackage,afterPackage);
                 if(!verified){listener.status("AGENT • VERIFY • UNCERTAIN • "+type);SystemClock.sleep(VERIFY_DELAY_MS);String retry=screen();String retryPackage=safePackage();NovaDiagnostics.event("observation","verification_retry="+type);verified=verificationPassed(type,value,before,retry,beforePackage,retryPackage);if(verified){after=retry;afterPackage=retryPackage;}}
                 addResult(outputs,i,type,value,output,before,after,verified,beforePackage,afterPackage);
-                if(!verified){failures.add(type+"_verification");listener.status("AGENT • RECOVERY • STEP NOT CONFIRMED");NovaDiagnostics.event("verification_failed",type);NovaDiagnostics.event("replan","verification_failed="+type);break;}
+                if(!verified){failures.add(type+"_verification");listener.status("AGENT • RECOVERY • STEP NOT CONFIRMED");NovaDiagnostics.event("verification_failed",type);NovaDiagnostics.event("replan", "verification_failed="+type);break;}
                 previous=after.isEmpty()?previous:after;previousPackage=afterPackage.isEmpty()?previousPackage:afterPackage;listener.status("AGENT • VERIFY • PASS • "+type);NovaDiagnostics.event("verification_passed",type);listener.status("AGENT • STATE OBSERVED • NEXT REASONING TURN");NovaDiagnostics.event("replan","verified="+type+",next_reasoning_turn");return result(true,false,0,"",screen(),"",outputs.toString());
             }
             String finalScreen=screen(); if(!failures.isEmpty())listener.status("AGENT • RECOVERY REQUIRED • "+failures.get(0));else listener.status("AGENT • TASK VERIFIED");
@@ -88,7 +88,14 @@ public final class NovaAgentPlanner {
     private ExecutionResult result(boolean valid,boolean complete,int failed,String action,String screen,String say,String tools){return new ExecutionResult(valid,complete,failed,action,screen,say,tools);}
     private String executeOne(String type,String value){try{if(isInformational(type)||"read_screen".equals(type))return executor.executeTool(type,value);if("parallel".equals(type))return executor.executeParallel(value);if("click_text".equals(type))return boolResult(executor.clickText(value));if("click_index".equals(type)){try{return boolResult(executor.clickVisibleIndex(Integer.parseInt(value)));}catch(NumberFormatException e){return "{\"ok\":false,\"error\":\"invalid_index\"}";}}if("wait".equals(type)){long ms;try{ms=Long.parseLong(value);}catch(NumberFormatException e){ms=500L;}ms=Math.max(100L,Math.min(ms,2500L));SystemClock.sleep(ms);return "{\"ok\":true,\"waitMs\":"+ms+"}";}return boolResult(executor.execute(type,value));}catch(Exception e){Log.e(TAG,"ACTION ERROR: "+type,e);NovaDiagnostics.event("tool_exception",type);return "{\"ok\":false,\"error\":\"tool_exception\"}";}}
     private boolean isInformational(String type){return NovaActionSchema.isInformational(type);}
-    private boolean outputOk(String output){if(output==null||output.trim().isEmpty())return false;try{return new JSONObject(output).optBoolean("ok",true);}catch(Exception e){return true;}}
+    /** Fail closed: malformed tool output is never treated as successful. */
+    private boolean outputOk(String output){
+        if(output==null||output.trim().isEmpty())return false;
+        try{
+            JSONObject result=new JSONObject(output);
+            return result.has("ok") && result.optBoolean("ok",false);
+        }catch(Exception e){return false;}
+    }
     private String boolResult(boolean ok){return "{\"ok\":"+ok+"}";}
     private void addResult(JSONArray array,int index,String type,String value,String output,String before,String after,boolean verified,String beforePackage,String afterPackage)throws Exception{String safeValue="type_text".equals(type)?REDACTED_INPUT:value;String safeBefore=redactInput(type,value,before);String safeAfter=redactInput(type,value,after);String safeOutput=redactInput(type,value,output);array.put(new JSONObject().put("step",index+1).put("tool",type).put("value",safeValue).put("ok",outputOk(output)).put("verified",verified).put("beforePackage",beforePackage==null?"":beforePackage).put("afterPackage",afterPackage==null?"":afterPackage).put("before",NovaAgentPolicy.bounded(safeBefore==null?"":safeBefore,NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)).put("after",NovaAgentPolicy.bounded(safeAfter==null?"":safeAfter,NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)).put("result",NovaAgentPolicy.bounded(safeOutput==null?"":safeOutput,NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)));}
     private String redactInput(String type,String value,String text){if(text==null||text.isEmpty()||!"type_text".equals(type)||value==null||value.isEmpty())return text;return text.replace(value,REDACTED_INPUT);}
