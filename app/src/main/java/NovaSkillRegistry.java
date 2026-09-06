@@ -24,10 +24,15 @@ public final class NovaSkillRegistry {
     private final Context context;
     private final Callback callback;
     private final List<NovaSkill> extensions = new ArrayList<>();
+    private final NovaFoodAgent foodAgent;
 
     public NovaSkillRegistry(Context context, Callback callback) {
         this.context = context.getApplicationContext();
         this.callback = callback;
+        this.foodAgent = new NovaFoodAgent(this.context, new NovaFoodAgent.Callback() {
+            @Override public void status(String text) { callback.status(text); }
+            @Override public void reply(String text) { callback.reply(text); }
+        });
     }
 
     /** Registers an isolated skill extension. Existing built-in skills remain independent. */
@@ -57,6 +62,10 @@ public final class NovaSkillRegistry {
                 callback.status("SKILL FAILED • " + skill.id());
             }
         }
+
+        // Food Agent runs before generic AI routing so food requests get deterministic handling.
+        if (foodAgent.handle(command)) return true;
+
         if (c.equals("what is my battery") || c.contains("battery level")) {
             android.os.BatteryManager bm = (android.os.BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
             int level = bm == null ? -1 : bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY);
