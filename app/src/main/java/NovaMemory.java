@@ -28,15 +28,16 @@ public final class NovaMemory {
         trim(h, MAX_MESSAGES); save(HISTORY, h);
     }
     public synchronized void rememberEpisode(String taskId, String event, String outcome) {
-        if (event == null || event.trim().isEmpty()) return;
-        JSONArray a = read(EPISODES); try { JSONObject item = entry("episode", bounded(event.trim(), MAX_EPISODE_LENGTH)); item.put("taskId", bounded(taskId, 128)); item.put("outcome", bounded(outcome, 256)); a.put(item); } catch (JSONException ignored) { }
+        if (event == null || event.trim().isEmpty() || !isSafeToPersist("episode", event) || !isSafeToPersist("outcome", outcome)) return;
+        JSONArray a = read(EPISODES); try { JSONObject item = entry("episode", bounded(event.trim(), MAX_EPISODE_LENGTH)); item.put("taskId", bounded(taskId, 128)).put("outcome", bounded(outcome, 256)); a.put(item); } catch (JSONException ignored) { }
         trim(a, MAX_EPISODES); save(EPISODES, a);
     }
     public synchronized void rememberTask(String taskId, String goal, String state, String checkpoint) {
         if (taskId == null || taskId.trim().isEmpty() || goal == null || goal.trim().isEmpty()) return;
+        if (!isSafeToPersist("goal", goal) || !isSafeToPersist("checkpoint", checkpoint)) return;
         JSONArray a = read(TASKS); String id = taskId.trim(); JSONObject existing = null;
         for (int i = 0; i < a.length(); i++) { JSONObject item = a.optJSONObject(i); if (item != null && id.equals(item.optString("taskId"))) { existing = item; break; } }
-        try { if (existing == null) { existing = new JSONObject().put("taskId", bounded(id, 128)); a.put(existing); } existing.put("goal", bounded(goal.trim(), MAX_FACT_LENGTH)); existing.put("state", bounded(state, 256)); existing.put("checkpoint", bounded(checkpoint, MAX_EPISODE_LENGTH)); existing.put("updatedAt", System.currentTimeMillis()); } catch (JSONException ignored) { }
+        try { if (existing == null) { existing = new JSONObject().put("taskId", bounded(id, 128)); a.put(existing); } existing.put("goal", bounded(goal.trim(), MAX_FACT_LENGTH)).put("state", bounded(state, 256)).put("checkpoint", bounded(checkpoint, MAX_EPISODE_LENGTH)).put("updatedAt", System.currentTimeMillis()); } catch (JSONException ignored) { }
         trim(a, MAX_TASKS); save(TASKS, a);
     }
     public synchronized JSONObject taskMemory(String taskId) { if (taskId == null) return null; JSONArray a = read(TASKS); for (int i = 0; i < a.length(); i++) { JSONObject item = a.optJSONObject(i); if (item != null && taskId.trim().equals(item.optString("taskId"))) return item; } return null; }
@@ -71,8 +72,9 @@ public final class NovaMemory {
     public static boolean isSafeToPersist(String key, String value) {
         String k = key == null ? "" : key.toLowerCase(Locale.ROOT); String v = value == null ? "" : value.trim();
         if (k.matches(".*(password|passwd|secret|token|api[_ -]?key|authorization|credential|private[_ -]?key).*")) return false;
-        if (v.matches("(?i).*\\b(bearer|api[_ -]?key|password|passwd|authorization|private[_ -]?key)\\s*[:=].*")) return false;
-        return !v.matches("(?i)sk-[A-Za-z0-9_-]{16,}") && !v.matches("(?i)AIza[0-9A-Za-z_-]{20,}");
+        if (v.matches("(?is).*\\b(bearer|api[_ -]?key|password|passwd|authorization|private[_ -]?key)\\s*[:=]\\s*\\S+.*")) return false;
+        if (v.matches("(?is).*\\bbearer\\s+[A-Za-z0-9._~+/=-]{8,}.*")) return false;
+        return !v.matches("(?is).*\\bsk-[A-Za-z0-9_-]{16,}.*") && !v.matches("(?is).*\\bAIza[0-9A-Za-z_-]{20,}.*");
     }
     private JSONObject entry(String role, String content) throws JSONException { return new JSONObject().put("role", role).put("content", content).put("timestamp", System.currentTimeMillis()).put("layer", role.equals("episode") ? LAYER_EPISODIC : LAYER_SHORT_TERM); }
     private void appendMatching(JSONArray out, JSONArray source, String q, int max, String field) { if (q.isEmpty()) return; for (int i = source.length() - 1; i >= 0 && out.length() < max; i--) { JSONObject item = source.optJSONObject(i); if (item != null && item.optString(field, "").toLowerCase(Locale.ROOT).contains(q)) out.put(item); } }
