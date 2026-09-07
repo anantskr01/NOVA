@@ -7,11 +7,11 @@ import org.json.JSONObject;
 public final class NovaOllamaProvider extends NovaHttpAiProvider {
     @Override public String id() { return "ollama"; }
     @Override public boolean localOnly() { return true; }
-    @Override public boolean supportsStreaming() { return true; }
+    @Override public boolean supportsStreaming() { return false; }
 
     @Override
     public boolean supports(String endpoint) {
-        String e = endpoint == null ? "" : endpoint.trim().toLowerCase();
+        String e = endpoint == null ? "" : endpoint.trim().toLowerCase(java.util.Locale.ROOT);
         if (e.isEmpty()) return false;
         return !e.contains("/v1");
     }
