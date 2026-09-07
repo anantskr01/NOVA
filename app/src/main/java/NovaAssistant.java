@@ -283,9 +283,9 @@ public final class NovaAssistant {
         GestureAccessibilityService service = GestureAccessibilityService.getInstance();
         return service == null ? "Accessibility service is not connected." : service.getUiSnapshot();
     }
-    private void launch(Intent intent) { try { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Exception e) { Log.e(TAG,"Launch failed",e); } }
+    private void launch(Intent intent) { try { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Exception e) { Log.e(TAG, "Launch failed", e); } }
+    private void say(String text) { if (listener != null) listener.onStatus("REPLY • " + (text == null ? "" : text)); if (tts != null && text != null && !text.trim().isEmpty()) tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NOVA"); }
     private void status(String text) { if (listener != null) listener.onStatus(text); }
-    private void say(String text) { if (listener != null) listener.onStatus(text); if (tts != null && text != null && !text.trim().isEmpty()) tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NOVA"); }
     private boolean containsAny(String value, String... options) { for (String option : options) if (value.equals(option) || value.contains(option)) return true; return false; }
     public void shutdown() { if (tts != null) { tts.stop(); tts.shutdown(); } taskManager.shutdown(); brain.shutdown(); web.shutdown(); aiProbe.shutdown(); probeExecutor.shutdownNow(); }
     public void destroy() { shutdown(); }
