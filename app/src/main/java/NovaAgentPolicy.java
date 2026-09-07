@@ -75,7 +75,7 @@ public final class NovaAgentPolicy {
     public static boolean looksCredentialLike(String value) {
         if (value == null) return false;
         String v = value.trim();
-        return v.matches("(?is).*\\b(bearer\\s+[A-Za-z0-9._~+/=-]{8,}|api[_ -]?key\\s*[:=]\\s*\\S+|password\\s*[:=]\\s*\\S+|passwd\\s*[:=]\\s*\\S+|authorization\\s*[:=]\\s*\\S+|private[_ -]?key\\s*[:=]\\s*\\S+).*\")
+        return v.matches("(?is).*\\b(bearer\\s+[A-Za-z0-9._~+/=-]{8,}|api[_ -]?key\\s*[:=]\\s*\\S+|password\\s*[:=]\\s*\\S+|passwd\\s*[:=]\\s*\\S+|authorization\\s*[:=]\\s*\\S+|private[_ -]?key\\s*[:=]\\s*\\S+).*\\b")
                 || v.matches("(?is).*\\bsk-[A-Za-z0-9_-]{16,}.*")
                 || v.matches("(?is).*\\bAIza[0-9A-Za-z_-]{20,}.*");
     }
