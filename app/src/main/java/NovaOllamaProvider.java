@@ -13,6 +13,14 @@ public final class NovaOllamaProvider extends NovaHttpAiProvider {
     public boolean supports(String endpoint) {
         String e = endpoint == null ? "" : endpoint.trim().toLowerCase(java.util.Locale.ROOT);
         if (e.isEmpty()) return false;
+        try {
+            java.net.URI uri = java.net.URI.create(e);
+            String scheme = uri.getScheme();
+            String host = uri.getHost();
+            if (!("http".equals(scheme) || "https".equals(scheme)) || host == null || host.isEmpty()) return false;
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
         return !e.contains("/v1");
     }
 
