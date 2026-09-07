@@ -74,8 +74,10 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
                     aiEndpointInput.getText().toString(),
                     aiKeyInput.getText().toString(),
                     aiModelInput.getText().toString());
+            aiModelInput.setText(nova.getModel());
             Toast.makeText(this, "NOVA AI settings saved securely", Toast.LENGTH_SHORT).show();
         });
+        findViewById(R.id.testAiButton).setOnClickListener(v -> nova.testAiCore());
         findViewById(R.id.accessibilityButton).setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         findViewById(R.id.notificationButton).setOnClickListener(v -> startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")));
 
@@ -260,32 +262,16 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == CAMERA_PERMISSION_CODE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) requestAudioThenStart();
-            else {
-                statusText.setText("NOVA • CAMERA DENIED");
-                handStatusText.setText("VISION • DISABLED");
-                hudView.setState("LOCKED");
-            }
-        } else if (requestCode == NOTIFICATION_PERMISSION_CODE) {
-            assistantStatusText.setText("ASSISTANT • NOTIFICATION PERMISSION UPDATED");
+            else { statusText.setText("NOVA • CAMERA PERMISSION DENIED"); handStatusText.setText("VISION • DISABLED"); hudView.setState("ERROR"); }
         } else if (requestCode == AUDIO_PERMISSION_CODE) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                assistantStatusText.setText("VOICE • READY");
-            } else {
-                assistantStatusText.setText("VOICE • TEXT COMMANDS STILL AVAILABLE");
-            }
-            startCameraGestureService();
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) startCameraGestureService();
+            else assistantStatusText.setText("VOICE • MICROPHONE PERMISSION DENIED");
         }
     }
 
     @Override protected void onDestroy() {
-        if (speechRecognizer != null) {
-            speechRecognizer.destroy();
-            speechRecognizer = null;
-        }
-        if (nova != null) {
-            nova.destroy();
-            nova = null;
-        }
+        if (speechRecognizer != null) speechRecognizer.destroy();
+        if (nova != null) nova.shutdown();
         super.onDestroy();
     }
 }
