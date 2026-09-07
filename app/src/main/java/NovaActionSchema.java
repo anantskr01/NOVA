@@ -44,48 +44,54 @@ public final class NovaActionSchema {
         if (action == null) return "action_missing";
         String shape = validateShape(action);
         if (!shape.isEmpty()) return shape;
-        String type = normalizeType(action.getString("type"));
-        if (!isKnown(type)) return "unknown_action:" + type;
-        if ("none".equals(type)) return "";
-        String value = action.has("value") ? action.getString("value").trim() : "";
-        if (requiresNonEmptyValue(type) && value.isEmpty()) return "value_empty:" + type;
-        if (value.length() > MAX_ACTION_VALUE_CHARS) return "value_too_long:" + type;
-        if ("click_index".equals(type)) {
-            try { if (Integer.parseInt(value) < 1) return "invalid_index:" + value; }
-            catch (NumberFormatException e) { return "invalid_index:" + value; }
-        }
-        if ("wait".equals(type)) {
-            try { long ms = Long.parseLong(value); if (ms < 100 || ms > 2500) return "wait_out_of_range:" + ms; }
-            catch (NumberFormatException e) { return "invalid_wait:" + value; }
-        }
-        if ("open_url".equals(type)) {
-            String lower = value.toLowerCase(Locale.ROOT);
-            if (!(lower.startsWith("http://") || lower.startsWith("https://"))) return "invalid_url_scheme";
-        }
-        if ("remember".equals(type)) {
-            try {
-                JSONObject memory = new JSONObject(value);
-                if (memory.optString("key", "").trim().isEmpty()) return "remember_key_empty";
-                if (memory.optString("value", "").trim().isEmpty()) return "remember_value_empty";
-                if (memory.optString("key").length() > 512 || memory.optString("value").length() > 2048) return "remember_value_too_long";
-            } catch (Exception e) { return "remember_invalid_json"; }
-        }
-        if ("parallel".equals(type)) {
-            try {
-                org.json.JSONArray steps = new org.json.JSONArray(value);
-                if (steps.length() == 0 || steps.length() > NovaAgentPolicy.MAX_STEPS) return "parallel_step_limit";
-                for (int i = 0; i < steps.length(); i++) {
-                    JSONObject step = steps.optJSONObject(i);
-                    if (step == null) return "parallel_invalid_step:" + i;
-                    String nested = validate(step);
-                    if (!nested.isEmpty()) return "parallel_invalid_step:" + i + ":" + nested;
-                    if (!canRunInParallel(step.getString("type"))) {
-                        return "parallel_invalid_step:" + i + ":parallel_mutation_forbidden";
+
+        try {
+            String type = normalizeType(action.getString("type"));
+            if (!isKnown(type)) return "unknown_action:" + type;
+            if ("none".equals(type)) return "";
+
+            String value = action.has("value") ? action.getString("value").trim() : "";
+            if (requiresNonEmptyValue(type) && value.isEmpty()) return "value_empty:" + type;
+            if (value.length() > MAX_ACTION_VALUE_CHARS) return "value_too_long:" + type;
+            if ("click_index".equals(type)) {
+                try { if (Integer.parseInt(value) < 1) return "invalid_index:" + value; }
+                catch (NumberFormatException e) { return "invalid_index:" + value; }
+            }
+            if ("wait".equals(type)) {
+                try { long ms = Long.parseLong(value); if (ms < 100 || ms > 2500) return "wait_out_of_range:" + ms; }
+                catch (NumberFormatException e) { return "invalid_wait:" + value; }
+            }
+            if ("open_url".equals(type)) {
+                String lower = value.toLowerCase(Locale.ROOT);
+                if (!(lower.startsWith("http://") || lower.startsWith("https://"))) return "invalid_url_scheme";
+            }
+            if ("remember".equals(type)) {
+                try {
+                    JSONObject memory = new JSONObject(value);
+                    if (memory.optString("key", "").trim().isEmpty()) return "remember_key_empty";
+                    if (memory.optString("value", "").trim().isEmpty()) return "remember_value_empty";
+                    if (memory.optString("key").length() > 512 || memory.optString("value").length() > 2048) return "remember_value_too_long";
+                } catch (Exception e) { return "remember_invalid_json"; }
+            }
+            if ("parallel".equals(type)) {
+                try {
+                    org.json.JSONArray steps = new org.json.JSONArray(value);
+                    if (steps.length() == 0 || steps.length() > NovaAgentPolicy.MAX_STEPS) return "parallel_step_limit";
+                    for (int i = 0; i < steps.length(); i++) {
+                        JSONObject step = steps.optJSONObject(i);
+                        if (step == null) return "parallel_invalid_step:" + i;
+                        String nested = validate(step);
+                        if (!nested.isEmpty()) return "parallel_invalid_step:" + i + ":" + nested;
+                        if (!canRunInParallel(step.getString("type"))) {
+                            return "parallel_invalid_step:" + i + ":parallel_mutation_forbidden";
+                        }
                     }
-                }
-            } catch (Exception e) { return "parallel_invalid_json"; }
+                } catch (Exception e) { return "parallel_invalid_json"; }
+            }
+            return "";
+        } catch (org.json.JSONException e) {
+            return "action_invalid_json:" + e.getMessage();
         }
-        return "";
     }
 
     private static String validateShape(JSONObject action) {
