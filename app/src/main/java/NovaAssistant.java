@@ -267,7 +267,13 @@ public final class NovaAssistant {
     }
     private void search(String query) {
         status("WEB RESEARCH • " + query);
-        try { say(web.search(query, 5)); } catch (Exception e) { say("Web search failed."); }
+        web.search(query, new NovaWebTool.Callback() {
+            @Override public void onResult(String text) { say(text); }
+            @Override public void onError(String error) {
+                Log.w(TAG, "Web search failed: " + error);
+                say("Web search failed.");
+            }
+        });
     }
     private String readScreen() {
         GestureAccessibilityService service = GestureAccessibilityService.getInstance();
@@ -286,4 +292,5 @@ public final class NovaAssistant {
     private void status(String text) { if (listener != null) listener.onStatus(text); }
     private boolean containsAny(String c, String... values) { for (String value : values) if (c.contains(value)) return true; return false; }
     public void shutdown() { if (tts != null) { tts.stop(); tts.shutdown(); } taskManager.shutdown(); brain.shutdown(); web.shutdown(); aiProbe.shutdown(); probeExecutor.shutdownNow(); }
+    public void destroy() { shutdown(); }
 }
