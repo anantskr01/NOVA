@@ -8,6 +8,8 @@ import android.speech.tts.TextToSpeech;
 import android.util.Log;
 
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** NOVA interaction gateway: deterministic local skills first, then the central AI Brain. */
 public final class NovaAssistant {
@@ -30,6 +32,8 @@ public final class NovaAssistant {
     private final NovaActionEngine actions;
     private final NovaBrain brain;
     private final NovaTaskManager taskManager;
+    private final NovaAiClient aiProbe = new NovaAiClient();
+    private final ExecutorService probeExecutor = Executors.newSingleThreadExecutor();
     private TextToSpeech tts;
 
     public NovaAssistant(Context context, Listener listener) {
@@ -60,15 +64,60 @@ public final class NovaAssistant {
     }
 
     public void saveAiSettings(String endpoint, String apiKey, String model) {
-        prefs.edit().putString(ENDPOINT, endpoint == null ? "" : endpoint.trim())
-                .putString(MODEL, model == null || model.trim().isEmpty() ? "gpt-4o-mini" : model.trim()).apply();
+        String cleanEndpoint = endpoint == null ? "" : endpoint.trim();
+        String cleanModel = model == null ? "" : model.trim();
+        if (cleanModel.isEmpty()) {
+            cleanModel = isOllamaEndpoint(cleanEndpoint) ? "qwen2.5:1.5b" : "gpt-4o-mini";
+        }
+        prefs.edit().putString(ENDPOINT, cleanEndpoint)
+                .putString(MODEL, cleanModel).apply();
         secureStore.putApiKey(apiKey == null ? "" : apiKey.trim());
-        status("AI CORE CONFIGURED • KEY PROTECTED");
+        status("AI CORE CONFIGURED • " + (isOllamaEndpoint(cleanEndpoint) ? "OLLAMA / " : "PROVIDER / ") + cleanModel);
     }
 
     public String getEndpoint() { return prefs.getString(ENDPOINT, ""); }
-    public String getModel() { return prefs.getString(MODEL, "gpt-4o-mini"); }
+    public String getModel() {
+        String model = prefs.getString(MODEL, "");
+        if (model == null || model.trim().isEmpty()) return isOllamaEndpoint(getEndpoint()) ? "qwen2.5:1.5b" : "gpt-4o-mini";
+        return model;
+    }
     public boolean hasAiCore() { return !getEndpoint().trim().isEmpty(); }
+
+    /** Runs the configured provider reachability probe off the UI thread and reports a precise result. */
+    public void testAiCore() {
+        final String endpoint = getEndpoint();
+        final String apiKey = secureStore.getApiKey();
+        final String model = getModel();
+        if (endpoint.trim().isEmpty()) {
+            status("AI CORE • NOT CONFIGURED");
+            say("AI Core is not configured yet.");
+            return;
+        }
+        status("AI CORE • TESTING • " + aiProbe.providerId(endpoint) + " / " + model);
+        probeExecutor.execute(() -> {
+            try {
+                NovaProviderHealth.Result result = aiProbe.healthCheck(endpoint, apiKey);
+                NovaDiagnostics.event("provider_health_test", result.state.name().toLowerCase(Locale.ROOT) + " http=" + result.httpCode);
+                String detail = result.detail == null || result.detail.isEmpty() ? "" : " • " + result.detail;
+                if (result.isHealthy()) {
+                    status("AI CORE • REACHABLE • " + aiProbe.providerId(endpoint));
+                    say("AI Core is reachable. " + aiProbe.providerId(endpoint) + " is responding in " + result.latencyMillis + " milliseconds. Model: " + model + ".");
+                } else {
+                    status("AI CORE • " + result.state.name().replace('_', ' '));
+                    say("AI Core test failed: " + result.state.name().replace('_', ' ') + " (HTTP " + result.httpCode + ", " + result.latencyMillis + " milliseconds)" + detail + ".");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "AI CORE HEALTH TEST FAILED", e);
+                status("AI CORE • TEST ERROR");
+                say("AI Core health test failed unexpectedly. Check the configured endpoint and network connection.");
+            }
+        });
+    }
+
+    private boolean isOllamaEndpoint(String endpoint) {
+        String e = endpoint == null ? "" : endpoint.trim().toLowerCase(Locale.ROOT);
+        return !e.isEmpty() && !e.contains("/v1") && (e.contains(":11434") || e.contains("ollama"));
+    }
 
     public void handleVoice(String raw) {
         if (raw == null) return;
@@ -218,16 +267,23 @@ public final class NovaAssistant {
     }
     private void search(String query) {
         status("WEB RESEARCH • " + query);
-        web.search(query, new NovaWebTool.Callback() {
-            @Override public void onResult(String text) { say(text); }
-            @Override public void onError(String error) { if (!actions.execute("search", query)) { say("I couldn't open the search results."); return; } say("I opened the search results."); }
-        });
+        try { say(web.search(query, 5)); } catch (Exception e) { say("Web search failed."); }
     }
-    private String getUiSnapshot() { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service == null ? "Accessibility access is not connected." : service.getUiSnapshot(); }
-    private String readScreen() { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service == null ? "Accessibility access is not connected, so I cannot inspect the current screen." : service.getVisibleTextSummary(); }
-    private void launch(Intent intent) { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(intent); }
-    private boolean containsAny(String value, String... options) { for (String option : options) if (value.equals(option) || value.contains(option)) return true; return false; }
-    private void status(String text) { if (listener != null && text != null) listener.onStatus(text); }
-    private void say(String text) { if (text == null || text.trim().isEmpty()) return; if (listener != null) listener.onStatus(text); if (tts != null) try { tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NOVA"); } catch (Exception ignored) { } }
-    public void destroy() { if (tts != null) { try { tts.stop(); tts.shutdown(); } catch (Exception ignored) { } tts = null; } taskManager.shutdown(); brain.shutdown(); web.shutdown(); }
+    private String readScreen() {
+        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+        return service == null ? "Accessibility service is not connected." : service.getVisibleTextSummary();
+    }
+    private String getUiSnapshot() {
+        GestureAccessibilityService service = GestureAccessibilityService.getInstance();
+        return service == null ? "Accessibility service is not connected." : service.getUiSnapshot();
+    }
+    private void launch(Intent intent) { try { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Exception e) { Log.e(TAG, "Launch failed", e); } }
+    private void say(String text) {
+        String value = text == null || text.trim().isEmpty() ? "Done." : text.trim();
+        if (listener != null) listener.onStatus("REPLY • " + value);
+        if (tts != null) tts.speak(value, TextToSpeech.QUEUE_FLUSH, null, "NOVA");
+    }
+    private void status(String text) { if (listener != null) listener.onStatus(text); }
+    private boolean containsAny(String c, String... values) { for (String value : values) if (c.contains(value)) return true; return false; }
+    public void shutdown() { if (tts != null) { tts.stop(); tts.shutdown(); } taskManager.shutdown(); brain.shutdown(); web.shutdown(); aiProbe.shutdown(); probeExecutor.shutdownNow(); }
 }
