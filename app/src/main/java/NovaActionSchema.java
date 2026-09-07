@@ -42,10 +42,12 @@ public final class NovaActionSchema {
 
     public static String validate(JSONObject action) {
         if (action == null) return "action_missing";
-        String type = normalizeType(action.optString("type", ""));
+        String shape = validateShape(action);
+        if (!shape.isEmpty()) return shape;
+        String type = normalizeType(action.getString("type"));
         if (!isKnown(type)) return "unknown_action:" + type;
         if ("none".equals(type)) return "";
-        String value = action.optString("value", "").trim();
+        String value = action.has("value") ? action.getString("value").trim() : "";
         if (requiresNonEmptyValue(type) && value.isEmpty()) return "value_empty:" + type;
         if (value.length() > MAX_ACTION_VALUE_CHARS) return "value_too_long:" + type;
         if ("click_index".equals(type)) {
@@ -77,11 +79,23 @@ public final class NovaActionSchema {
                     if (step == null) return "parallel_invalid_step:" + i;
                     String nested = validate(step);
                     if (!nested.isEmpty()) return "parallel_invalid_step:" + i + ":" + nested;
-                    if (!canRunInParallel(step.optString("type", ""))) {
+                    if (!canRunInParallel(step.getString("type"))) {
                         return "parallel_invalid_step:" + i + ":parallel_mutation_forbidden";
                     }
                 }
             } catch (Exception e) { return "parallel_invalid_json"; }
+        }
+        return "";
+    }
+
+    private static String validateShape(JSONObject action) {
+        if (!action.has("type")) return "type_missing";
+        Object rawType = action.opt("type");
+        if (!(rawType instanceof String)) return "type_not_string";
+        if (action.has("value") && !(action.opt("value") instanceof String)) return "value_not_string";
+        for (java.util.Iterator<String> keys = action.keys(); keys.hasNext();) {
+            String key = keys.next();
+            if (!("type".equals(key) || "value".equals(key))) return "unexpected_field:" + key;
         }
         return "";
     }
