@@ -39,8 +39,29 @@ public final class NovaAiProviderManager {
             if (callback != null) callback.onError("AUTH_REQUIRED: provider requires an API key");
             return;
         }
+        if (messages == null || messages.length() == 0) {
+            if (callback != null) callback.onError("AI_REQUEST_INVALID: messages are empty");
+            return;
+        }
         Log.d(TAG, "Routing request to provider=" + provider.id());
-        provider.chat(endpoint, apiKey, model, messages, callback);
+        provider.chat(endpoint, apiKey, model, messages, new NovaAiProvider.Callback() {
+            @Override public void onResult(String text) {
+                if (callback != null) callback.onResult(text);
+            }
+            @Override public void onError(String message) {
+                String safe = NovaDiagnostics.compact(message);
+                NovaProviderHealth.Result health;
+                try {
+                    health = NovaProviderHealth.check(provider, endpoint, apiKey);
+                    NovaDiagnostics.event("provider_health_after_failure", provider.id() + ":" + health.state);
+                    safe += " Provider health: " + health.state.name().toLowerCase(java.util.Locale.ROOT)
+                            + " (" + health.latencyMillis + "ms).";
+                } catch (Exception ignored) {
+                    safe += " Provider health: unknown.";
+                }
+                if (callback != null) callback.onError(safe);
+            }
+        });
     }
 
     /** Synchronous reachability probe. Run this from a background thread. */
@@ -66,14 +87,14 @@ public final class NovaAiProviderManager {
 
     /** Stable, non-secret failure classification for diagnostics and recovery decisions. */
     public static String classifyFailure(String message) {
-        String m = message == null ? "" : message.toLowerCase();
+        String m = message == null ? "" : message.toLowerCase(java.util.Locale.ROOT);
         if (m.contains("timeout") || m.contains("timed out")) return "timeout";
         if (m.contains("401") || m.contains("403") || m.contains("auth") || m.contains("api key")) return "authentication";
         if (m.contains("429")) return "rate_limited";
         if (m.contains("500") || m.contains("502") || m.contains("503") || m.contains("504")) return "provider_server_error";
         if (m.contains("unknown_action") || m.contains("invalid plan") || m.contains("malformed")) return "invalid_ai_output";
         if (m.contains("unreachable") || m.contains("network") || m.contains("connection")) return "network";
-        if (m.contains("provider")) return "provider_unavailable";
+        if (m.contains("provider") || m.contains("ai core")) return "provider_unavailable";
         return "unknown";
     }
 
