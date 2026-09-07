@@ -25,11 +25,12 @@ public final class NovaAiClient {
     public String providerSummary() { return providers.describe(); }
 
     /**
-     * Full AI Core verification. Unlike a reachability-only health probe, this sends a
-     * tiny real inference request through the same provider path used by NOVA Brain.
+     * Full AI Core verification using the configured model. Unlike a reachability-only
+     * health probe, this sends a tiny real inference request through the same provider
+     * path used by NOVA Brain.
      * Caller must use a background thread.
      */
-    public NovaProviderHealth.Result healthCheck(String endpoint, String apiKey) {
+    public NovaProviderHealth.Result healthCheck(String endpoint, String apiKey, String model) {
         final long started = System.currentTimeMillis();
         if (endpoint == null || endpoint.trim().isEmpty()) {
             return result(NovaProviderHealth.State.INVALID_ENDPOINT, 0, started, "endpoint_missing");
@@ -48,7 +49,7 @@ public final class NovaAiClient {
                     .put("role", "user")
                     .put("content", "Reply with exactly: NOVA AI CORE OK"));
 
-            chat(endpoint, apiKey, "", messages, new Callback() {
+            chat(endpoint, apiKey, model, messages, new Callback() {
                 @Override public void onResult(String text) {
                     response.set(text == null ? "" : text.trim());
                     latch.countDown();
@@ -84,6 +85,11 @@ public final class NovaAiClient {
         } catch (Exception e) {
             return result(NovaProviderHealth.State.UNKNOWN, 0, started, "inference_probe_error");
         }
+    }
+
+    /** Backward-compatible probe overload. */
+    public NovaProviderHealth.Result healthCheck(String endpoint, String apiKey) {
+        return healthCheck(endpoint, apiKey, "");
     }
 
     private NovaProviderHealth.Result result(NovaProviderHealth.State state, int code, long started, String detail) {
