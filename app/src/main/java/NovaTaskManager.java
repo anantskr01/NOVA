@@ -170,9 +170,32 @@ public final class NovaTaskManager implements NovaBrain.GoalOutcomeListener, Nov
 
     private String resumeRequest(Task task) {
         if (task.progressTurn <= 0 || task.checkpoint.isEmpty()) return task.goal;
-        return "Resume the user's task from the current UI state. Original goal: " + task.goal
-                + ". NOVA previously verified progress through reasoning turn " + task.progressTurn
-                + " (checkpoint: " + task.checkpoint + "). Do not repeat already verified work unless current observation shows it is necessary; re-observe first and continue toward the original goal.";
+        try {
+            JSONObject cp = new JSONObject(task.checkpoint);
+            String tool = cp.optString("tool", "").trim();
+            String value = cp.optString("value", "").trim();
+            String afterPackage = cp.optString("afterPackage", "").trim();
+            String ui = NovaDiagnostics.compact(cp.optString("ui", ""));
+            int step = cp.optInt("step", 0);
+            boolean verified = cp.optBoolean("verified", false);
+            int recovery = Math.max(0, cp.optInt("recoveryCount", 0));
+            StringBuilder out = new StringBuilder("Resume the user's task from the current UI state. Original goal: ")
+                    .append(task.goal)
+                    .append(". NOVA previously verified step ").append(step)
+                    .append(" at reasoning turn ").append(task.progressTurn)
+                    .append(": tool=").append(tool.isEmpty() ? "unknown" : tool)
+                    .append(", value=").append(value.isEmpty() ? "[none]" : value)
+                    .append(", verified=").append(verified)
+                    .append(", resulting package=").append(afterPackage.isEmpty() ? "[unknown]" : afterPackage);
+            if (recovery > 0) out.append(", prior recovery attempts=").append(recovery);
+            if (!ui.isEmpty()) out.append(". Last verified UI snapshot: ").append(NovaAgentPolicy.bounded(ui, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));
+            out.append(". Do not repeat this verified step unless the current observation shows it is necessary. Re-observe the current UI first, then continue with the next unmet part of the original goal.");
+            return out.toString();
+        } catch (Exception ignored) {
+            return "Resume the user's task from the current UI state. Original goal: " + task.goal
+                    + ". NOVA previously verified progress through reasoning turn " + task.progressTurn
+                    + ". Re-observe first and continue toward the original goal without repeating already verified work unless necessary.";
+        }
     }
 
     public synchronized boolean cancel(String id) {
@@ -225,7 +248,11 @@ public final class NovaTaskManager implements NovaBrain.GoalOutcomeListener, Nov
     public synchronized int queuedCount() { return queue.size(); }
     public synchronized String activeText() {
         if (active == null || !RUNNING.equals(active.status)) return "NOVA is idle.";
-        return "NOVA is running " + active.id + ": " + active.goal + (active.progressTurn > 0 ? " (checkpoint " + active.progressTurn + ")" : "");
+        String detail = "";
+        if (!active.checkpoint.isEmpty()) {
+            try { detail = " • " + new JSONObject(active.checkpoint).optString("tool", "checkpoint"); } catch (Exception ignored) { }
+        }
+        return "NOVA is running " + active.id + ": " + active.goal + (active.progressTurn > 0 ? " (checkpoint " + active.progressTurn + detail + ")" : "");
     }
 
     public synchronized String statusText() {
