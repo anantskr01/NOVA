@@ -83,7 +83,7 @@ public final class NovaAssistant {
     }
     public boolean hasAiCore() { return !getEndpoint().trim().isEmpty(); }
 
-    /** Runs the configured provider reachability probe off the UI thread and reports a precise result. */
+    /** Runs the configured provider inference probe off the UI thread and reports a precise result. */
     public void testAiCore() {
         final String endpoint = getEndpoint();
         final String apiKey = secureStore.getApiKey();
@@ -96,7 +96,7 @@ public final class NovaAssistant {
         status("AI CORE • TESTING • " + aiProbe.providerId(endpoint) + " / " + model);
         probeExecutor.execute(() -> {
             try {
-                NovaProviderHealth.Result result = aiProbe.healthCheck(endpoint, apiKey);
+                NovaProviderHealth.Result result = aiProbe.healthCheck(endpoint, apiKey, model);
                 NovaDiagnostics.event("provider_health_test", result.state.name().toLowerCase(Locale.ROOT) + " http=" + result.httpCode);
                 String detail = result.detail == null || result.detail.isEmpty() ? "" : " • " + result.detail;
                 if (result.isHealthy()) {
@@ -283,14 +283,10 @@ public final class NovaAssistant {
         GestureAccessibilityService service = GestureAccessibilityService.getInstance();
         return service == null ? "Accessibility service is not connected." : service.getUiSnapshot();
     }
-    private void launch(Intent intent) { try { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Exception e) { Log.e(TAG, "Launch failed", e); } }
-    private void say(String text) {
-        String value = text == null || text.trim().isEmpty() ? "Done." : text.trim();
-        if (listener != null) listener.onStatus("REPLY • " + value);
-        if (tts != null) tts.speak(value, TextToSpeech.QUEUE_FLUSH, null, "NOVA");
-    }
+    private void launch(Intent intent) { try { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Exception e) { Log.e(TAG,"Launch failed",e); } }
     private void status(String text) { if (listener != null) listener.onStatus(text); }
-    private boolean containsAny(String c, String... values) { for (String value : values) if (c.contains(value)) return true; return false; }
+    private void say(String text) { if (listener != null) listener.onStatus(text); if (tts != null && text != null && !text.trim().isEmpty()) tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NOVA"); }
+    private boolean containsAny(String value, String... options) { for (String option : options) if (value.equals(option) || value.contains(option)) return true; return false; }
     public void shutdown() { if (tts != null) { tts.stop(); tts.shutdown(); } taskManager.shutdown(); brain.shutdown(); web.shutdown(); aiProbe.shutdown(); probeExecutor.shutdownNow(); }
     public void destroy() { shutdown(); }
 }
