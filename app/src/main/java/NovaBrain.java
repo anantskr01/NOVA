@@ -110,7 +110,7 @@ public final class NovaBrain {
                     if(!r.planValid){NovaDiagnostics.event("plan_invalid", NovaDiagnostics.compact(r.failedAction));if(recoveryAttempt<1)main.post(()->askAi(goal,recoveryAttempt+1,"Invalid plan: "+r.failedAction,token,turn+1,goalStarted));else{rememberAndReply("I couldn't produce a safe executable plan.");finishGoal(token,OUTCOME_FAILED,"Invalid executable plan after recovery.");}return;}
                     if(!r.toolResults.isEmpty()){
                         NovaDiagnostics.event("tool_executed", "results_present");
-                        notifyGoalProgress(goal,turn,"verified_tools="+countToolResults(r.toolResults));
+                        notifyGoalProgress(goal,turn,buildCheckpoint(r.toolResults,turn,recoveryAttempt));
                         main.post(()->askAi(goal,0,sanitizeModelFeedback(r.toolResults),token,turn+1,goalStarted));return;
                     }
                     if(r.completed){if(prematureCompletion(goal,r.finalScreen)){NovaDiagnostics.event("verification_failed", "premature_completion");main.post(()->askAi(goal,0,"NOVA must not claim this goal is complete yet. Re-observe the UI and continue with the next necessary action. Current UI:\n"+NovaAgentPolicy.bounded(r.finalScreen,NovaAgentPolicy.MAX_TOOL_RESULT_CHARS),token,turn+1,goalStarted));return;}if(!r.say.isEmpty())rememberAndReply(r.say);finishGoal(token,OUTCOME_SUCCESS,r.say);return;}
@@ -147,6 +147,32 @@ public final class NovaBrain {
             }
             return out.toString();
         } catch (Exception e) { return NovaDiagnostics.compact(raw); }
+    }
+
+    private String buildCheckpoint(String raw,int turn,int recoveryAttempt){
+        try{
+            JSONArray results=new JSONArray(raw);
+            JSONObject last=null;
+            for(int i=0;i<results.length();i++){
+                JSONObject item=results.optJSONObject(i);
+                if(item!=null&&item.optBoolean("verified",false))last=item;
+            }
+            if(last==null)return "";
+            JSONObject checkpoint=new JSONObject();
+            checkpoint.put("version",1);
+            checkpoint.put("turn",turn);
+            checkpoint.put("step",last.optInt("step",0));
+            checkpoint.put("tool",last.optString("tool",""));
+            String tool=last.optString("tool","");
+            checkpoint.put("value","type_text".equalsIgnoreCase(tool)?"[REDACTED_INPUT]":NovaAgentPolicy.bounded(last.optString("value",""),1024));
+            checkpoint.put("verified",true);
+            checkpoint.put("beforePackage",last.optString("beforePackage",""));
+            checkpoint.put("afterPackage",last.optString("afterPackage",""));
+            checkpoint.put("ui",NovaAgentPolicy.bounded(NovaDiagnostics.compact(last.optString("after","")),NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));
+            checkpoint.put("recoveryCount",Math.max(0,recoveryAttempt));
+            checkpoint.put("timestamp",System.currentTimeMillis());
+            return checkpoint.toString();
+        }catch(Exception e){return "";}
     }
 
     private int countToolResults(String raw){try{return new JSONArray(raw).length();}catch(Exception e){return raw==null||raw.trim().isEmpty()?0:1;}}
