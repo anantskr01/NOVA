@@ -17,5 +17,11 @@ public final class NovaAiClient {
 
     public String providerId(String endpoint) { return providers.providerId(endpoint); }
     public String providerSummary() { return providers.describe(); }
+
+    /** Explicit synchronous provider reachability probe; caller must use a background thread. */
+    public NovaProviderHealth.Result healthCheck(String endpoint, String apiKey) {
+        return providers.healthCheck(endpoint, apiKey);
+    }
+
     public void shutdown() { providers.shutdown(); }
 }
