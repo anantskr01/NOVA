@@ -8,7 +8,13 @@ import java.util.Locale;
 public final class NovaAgentPolicy {
     public static final int MAX_STEPS = 8;
     public static final int MAX_RETRIES = 2;
-    public static final long MAX_TASK_MILLIS = 60_000L;
+    /**
+     * Agent tasks may include remote local-network LLM inference. This must be longer
+     * than the provider's per-request timeout plus bounded retries, otherwise the brain
+     * can declare a healthy but slow Ollama task failed while its HTTP request is still
+     * legitimately running.
+     */
+    public static final long MAX_TASK_MILLIS = 300_000L;
     public static final int MAX_TOOL_RESULT_CHARS = 16_384;
     public static final int MAX_CONTEXT_ITEMS = 24;
 
@@ -69,7 +75,7 @@ public final class NovaAgentPolicy {
     public static boolean looksCredentialLike(String value) {
         if (value == null) return false;
         String v = value.trim();
-        return v.matches("(?is).*\\b(bearer\\s+[A-Za-z0-9._~+/=-]{8,}|api[_ -]?key\\s*[:=]\\s*\\S+|password\\s*[:=]\\s*\\S+|passwd\\s*[:=]\\s*\\S+|authorization\\s*[:=]\\s*\\S+|private[_ -]?key\\s*[:=]\\s*\\S+).*")
+        return v.matches("(?is).*\\b(bearer\\s+[A-Za-z0-9._~+/=-]{8,}|api[_ -]?key\\s*[:=]\\s*\\S+|password\\s*[:=]\\s*\\S+|passwd\\s*[:=]\\s*\\S+|authorization\\s*[:=]\\s*\\S+|private[_ -]?key\\s*[:=]\\s*\\S+).*\")
                 || v.matches("(?is).*\\bsk-[A-Za-z0-9_-]{16,}.*")
                 || v.matches("(?is).*\\bAIza[0-9A-Za-z_-]{20,}.*");
     }
