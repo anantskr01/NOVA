@@ -60,23 +60,14 @@ public final class NovaAssistant {
     }
 
     public void saveAiSettings(String endpoint, String apiKey, String model) {
-        String cleanEndpoint = endpoint == null ? "" : endpoint.trim();
-        String cleanModel = model == null ? "" : model.trim();
-        String defaultModel = cleanEndpoint.toLowerCase(Locale.ROOT).contains("/v1")
-                ? "gpt-4o-mini" : "qwen2.5:1.5b";
-        prefs.edit().putString(ENDPOINT, cleanEndpoint)
-                .putString(MODEL, cleanModel.isEmpty() ? defaultModel : cleanModel).apply();
+        prefs.edit().putString(ENDPOINT, endpoint == null ? "" : endpoint.trim())
+                .putString(MODEL, model == null || model.trim().isEmpty() ? "gpt-4o-mini" : model.trim()).apply();
         secureStore.putApiKey(apiKey == null ? "" : apiKey.trim());
         status("AI CORE CONFIGURED • KEY PROTECTED");
     }
 
     public String getEndpoint() { return prefs.getString(ENDPOINT, ""); }
-    public String getModel() {
-        String stored = prefs.getString(MODEL, "").trim();
-        if (!stored.isEmpty()) return stored;
-        String endpoint = getEndpoint().toLowerCase(Locale.ROOT);
-        return endpoint.contains("/v1") ? "gpt-4o-mini" : "qwen2.5:1.5b";
-    }
+    public String getModel() { return prefs.getString(MODEL, "gpt-4o-mini"); }
     public boolean hasAiCore() { return !getEndpoint().trim().isEmpty(); }
 
     public void handleVoice(String raw) {
@@ -227,3 +218,16 @@ public final class NovaAssistant {
     }
     private void search(String query) {
         status("WEB RESEARCH • " + query);
+        web.search(query, new NovaWebTool.Callback() {
+            @Override public void onResult(String text) { say(text); }
+            @Override public void onError(String error) { if (!actions.execute("search", query)) { say("I couldn't open the search results."); return; } say("I opened the search results."); }
+        });
+    }
+    private String getUiSnapshot() { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service == null ? "Accessibility access is not connected." : service.getUiSnapshot(); }
+    private String readScreen() { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service == null ? "Accessibility access is not connected, so I cannot inspect the current screen." : service.getVisibleTextSummary(); }
+    private void launch(Intent intent) { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(intent); }
+    private boolean containsAny(String value, String... options) { for (String option : options) if (value.equals(option) || value.contains(option)) return true; return false; }
+    private void status(String text) { if (listener != null && text != null) listener.onStatus(text); }
+    private void say(String text) { if (text == null || text.trim().isEmpty()) return; if (listener != null) listener.onStatus(text); if (tts != null) try { tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "NOVA"); } catch (Exception ignored) { } }
+    public void destroy() { if (tts != null) { try { tts.stop(); tts.shutdown(); } catch (Exception ignored) { } tts = null; } taskManager.shutdown(); brain.shutdown(); web.shutdown(); }
+}
