@@ -17,7 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Local/OpenAI-compatible AI client with bounded retry and robust response parsing. */
+/** Local-first AI gateway with HTTP fallback, bounded retry, and robust response parsing. */
 public final class NovaAiClient {
     public interface Callback { void onResult(String text); void onError(String message); }
 
@@ -28,8 +28,34 @@ public final class NovaAiClient {
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final LocalModelRuntime localRuntime = new LocalModelRuntime();
 
     public void chat(String endpoint, String apiKey, String model, JSONArray messages, Callback callback) {
+        // Local GGUF is the primary path. If no model is installed or inference fails,
+        // preserve the existing HTTP/OpenAI-compatible path as the fallback.
+        try {
+            if (localRuntime.tryChat(messages, new LocalModelRuntime.Callback() {
+                @Override
+                public void onResult(String text) {
+                    main.post(() -> callback.onResult(text));
+                }
+
+                @Override
+                public void onError(String message) {
+                    Log.w(TAG, "Local model unavailable; falling back to HTTP: " + message);
+                    requestHttp(endpoint, apiKey, model, messages, callback);
+                }
+            })) {
+                return;
+            }
+        } catch (Throwable localFailure) {
+            Log.w(TAG, "Local runtime could not start; falling back to HTTP", localFailure);
+        }
+
+        requestHttp(endpoint, apiKey, model, messages, callback);
+    }
+
+    private void requestHttp(String endpoint, String apiKey, String model, JSONArray messages, Callback callback) {
         executor.execute(() -> {
             String lastError = "AI request failed";
             for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -141,5 +167,8 @@ public final class NovaAiClient {
         return builder.toString();
     }
 
-    public void shutdown() { executor.shutdownNow(); }
+    public void shutdown() {
+        executor.shutdownNow();
+        localRuntime.shutdown();
+    }
 }
