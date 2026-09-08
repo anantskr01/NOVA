@@ -17,7 +17,7 @@ import java.io.File
  * Small adapter around the bundled llama.cpp Android AAR.
  * NovaAiClient remains the gateway; this class only owns local GGUF inference.
  */
-class LocalModelRuntime(context: Context) {
+class LocalModelRuntime {
     interface Callback {
         fun onResult(text: String)
         fun onError(message: String)
@@ -30,7 +30,7 @@ class LocalModelRuntime(context: Context) {
         private const val MAX_TOKENS = 384
     }
 
-    private val appContext = context.applicationContext
+    private val appContext: Context by lazy { resolveApplicationContext() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val lock = Any()
     private var model: LlamaModel? = null
@@ -98,6 +98,18 @@ class LocalModelRuntime(context: Context) {
         appContext.getExternalFilesDir("models") ?: File(appContext.filesDir, "models"),
         MODEL_NAME,
     )
+
+    private fun resolveApplicationContext(): Context {
+        try {
+            val activityThread = Class.forName("android.app.ActivityThread")
+            val method = activityThread.getDeclaredMethod("currentApplication")
+            val application = method.invoke(null) as? android.app.Application
+            if (application != null) return application.applicationContext
+        } catch (_: Throwable) {
+            // Fall through to a clear failure when the Android process is not initialized.
+        }
+        throw IllegalStateException("Android application context is not available")
+    }
 
     private fun buildSystemPrompt(messages: JSONArray): String {
         val parts = ArrayList<String>()
