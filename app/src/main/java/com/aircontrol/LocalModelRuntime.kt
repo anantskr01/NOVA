@@ -7,6 +7,7 @@ import dev.ffmpegkit.llama.LlamaModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -33,7 +34,6 @@ class LocalModelRuntime(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val lock = Any()
     private var model: LlamaModel? = null
-    private var loading = false
 
     fun isModelInstalled(): Boolean = modelFile().isFile && modelFile().length() > 0L
 
@@ -43,12 +43,10 @@ class LocalModelRuntime(context: Context) {
         scope.launch {
             try {
                 val loaded = getOrLoadModel()
-                val system = buildSystemPrompt(messages)
-                val prompt = buildConversationPrompt(messages)
                 val result = Llama.complete(
                     loaded,
-                    prompt = prompt,
-                    systemPrompt = system,
+                    prompt = buildConversationPrompt(messages),
+                    systemPrompt = buildSystemPrompt(messages),
                     maxTokens = MAX_TOKENS,
                 )
                 val text = result.text.trim()
@@ -62,7 +60,7 @@ class LocalModelRuntime(context: Context) {
     }
 
     fun shutdown() {
-        scope.coroutineContext.cancel()
+        scope.cancel()
         synchronized(lock) {
             model?.let { Llama.releaseModel(it) }
             model = null
@@ -72,37 +70,27 @@ class LocalModelRuntime(context: Context) {
     private suspend fun getOrLoadModel(): LlamaModel {
         synchronized(lock) {
             model?.let { return it }
-            if (loading) {
-                // The caller that reaches here first owns loading. Others wait below.
-            } else {
-                loading = true
-            }
         }
+
+        val loaded = Llama.loadModel(
+            modelFile().absolutePath,
+            LlamaConfig(
+                contextSize = CONTEXT_SIZE,
+                threads = THREADS,
+                gpuLayers = 0,
+                temperature = 0.2f,
+                topP = 0.9f,
+                topK = 40,
+            ),
+        )
 
         synchronized(lock) {
-            model?.let { return it }
-        }
-
-        return try {
-            val loaded = Llama.loadModel(
-                modelFile().absolutePath,
-                LlamaConfig(
-                    contextSize = CONTEXT_SIZE,
-                    threads = THREADS,
-                    gpuLayers = 0,
-                    temperature = 0.2f,
-                    topP = 0.9f,
-                    topK = 40,
-                ),
-            )
-            synchronized(lock) {
-                model = loaded
-                loading = false
+            model?.let {
+                Llama.releaseModel(loaded)
+                return it
             }
-            loaded
-        } catch (t: Throwable) {
-            synchronized(lock) { loading = false }
-            throw t
+            model = loaded
+            return loaded
         }
     }
 
