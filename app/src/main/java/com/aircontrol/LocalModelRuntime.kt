@@ -15,7 +15,7 @@ import java.io.File
 
 /**
  * Small adapter around the bundled llama.cpp Android AAR.
- * NovaAiClient remains the gateway; this class only owns local GGUF inference.
+ * NovaAiClient remains the gateway; this class owns local GGUF installation and inference.
  */
 class LocalModelRuntime {
     interface Callback {
@@ -24,7 +24,6 @@ class LocalModelRuntime {
     }
 
     companion object {
-        private const val MODEL_NAME = "nova.gguf"
         private const val CONTEXT_SIZE = 2048
         private const val THREADS = 4
         private const val MAX_TOKENS = 384
@@ -37,11 +36,17 @@ class LocalModelRuntime {
 
     fun isModelInstalled(): Boolean = modelFile().isFile && modelFile().length() > 0L
 
+    /**
+     * Starts local inference. If the model is missing, the first call downloads it once
+     * and then continues with inference. Returning true means the local path owns the callback.
+     */
     fun tryChat(messages: JSONArray, callback: Callback): Boolean {
-        if (!isModelInstalled()) return false
-
         scope.launch {
             try {
+                val manager = LocalModelManager(appContext)
+                if (!manager.isInstalled()) {
+                    manager.install()
+                }
                 val loaded = getOrLoadModel()
                 val result = Llama.complete(
                     loaded,
@@ -96,7 +101,7 @@ class LocalModelRuntime {
 
     private fun modelFile(): File = File(
         appContext.getExternalFilesDir("models") ?: File(appContext.filesDir, "models"),
-        MODEL_NAME,
+        LocalModelManager.MODEL_NAME,
     )
 
     private fun resolveApplicationContext(): Context {
