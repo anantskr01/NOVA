@@ -18,6 +18,8 @@ public final class NovaAssistant {
     private static final String ENDPOINT = "endpoint";
     private static final String MODEL = "model";
     private static final String WAKE_PHRASE = "hey nova";
+    private static final String GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent";
+    private static final String GEMINI_MODEL = "gemini-3.7-flash";
 
     private final Context context;
     private final Listener listener;
@@ -60,15 +62,19 @@ public final class NovaAssistant {
     }
 
     public void saveAiSettings(String endpoint, String apiKey, String model) {
-        prefs.edit().putString(ENDPOINT, endpoint == null ? "" : endpoint.trim())
-                .putString(MODEL, model == null || model.trim().isEmpty() ? "gpt-4o-mini" : model.trim()).apply();
+        String selectedEndpoint = endpoint == null || endpoint.trim().isEmpty() ? GEMINI_ENDPOINT : endpoint.trim();
+        String selectedModel = model == null || model.trim().isEmpty() ? GEMINI_MODEL : model.trim();
+        prefs.edit().putString(ENDPOINT, selectedEndpoint)
+                .putString(MODEL, selectedModel).apply();
         secureStore.putApiKey(apiKey == null ? "" : apiKey.trim());
-        status("AI CORE CONFIGURED • KEY PROTECTED");
+        status("AI CORE CONFIGURED • GEMINI 3.7 FLASH • KEY PROTECTED");
     }
 
-    public String getEndpoint() { return prefs.getString(ENDPOINT, ""); }
-    public String getModel() { return prefs.getString(MODEL, "gpt-4o-mini"); }
-    public boolean hasAiCore() { return !getEndpoint().trim().isEmpty(); }
+    public String getEndpoint() { return prefs.getString(ENDPOINT, GEMINI_ENDPOINT); }
+    public String getModel() { return prefs.getString(MODEL, GEMINI_MODEL); }
+    public boolean hasAiCore() {
+        return !getEndpoint().trim().isEmpty() && !secureStore.getApiKey().trim().isEmpty();
+    }
 
     public void handleVoice(String raw) {
         if (raw == null) return;
@@ -93,8 +99,6 @@ public final class NovaAssistant {
         status("PROCESSING • " + command);
 
         try {
-            // Task controls must be handled before skills or the AI fallback.
-            // This guarantees cancellation never falls through to "AI unavailable".
             if (containsAny(c, "stop nova", "stop listening", "be quiet", "stop speaking")) {
                 if (tts != null) tts.stop();
                 taskManager.cancelAll();
@@ -120,7 +124,6 @@ public final class NovaAssistant {
                 return;
             }
 
-            // Accept both typed IDs (NOVA-T0001) and common voice-recognition variants.
             java.util.regex.Matcher cancelTask = java.util.regex.Pattern.compile(
                     "(?i)^cancel\\s+(?:task\\s+)?(?:nova[- ]?t\\s*[- ]?(\\d{1,6})|nova[- ]?t(\\d{1,6}))\\s*$"
             ).matcher(command);
@@ -149,7 +152,7 @@ public final class NovaAssistant {
             if (containsAny(c, "recent notifications", "read notifications", "what notifications do i have")) { say(NovaNotificationListenerService.snapshot()); return; }
             if (containsAny(c, "open settings", "settings")) { executeLocal("settings", "Opening settings."); return; }
             if (containsAny(c, "open accessibility settings", "accessibility settings")) { launch(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); say("Opening accessibility settings."); return; }
-            if (containsAny(c, "open notification access", "notification access")) { launch(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")); say("Opening notification access."); return; }
+            if (containsAny(c, "open notification access", "notification access")) { launch(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")); say("Opening notification access settings."); return; }
             if (containsAny(c, "list apps", "show my apps", "what apps do i have")) { say(apps.launchableSummary(35)); return; }
 
             if (c.startsWith("search for ") || c.startsWith("search ") || c.startsWith("google ")) {
@@ -179,7 +182,7 @@ public final class NovaAssistant {
                 return;
             }
 
-            say("I can do built-in tablet tasks now. Configure an OpenAI-compatible AI endpoint for open-ended reasoning and multi-step planning.");
+            say("I can do built-in tablet tasks now. Add a Gemini 3.7 Flash API key to enable NOVA's open-ended reasoning and multi-step planning.");
         } catch (Exception e) {
             Log.e(TAG, "COMMAND ERROR", e);
             say("I couldn't complete that action. Check that the required Android permission is enabled.");
@@ -215,9 +218,8 @@ public final class NovaAssistant {
             String note = original.substring(9).trim();
             if (!note.isEmpty()) {
                 int as = note.toLowerCase(Locale.ROOT).indexOf(" as ");
-                if (as > 0 && as + 4 < note.length()) {
-                    memory.rememberFact(note.substring(as + 4).trim(), note.substring(0, as).trim());
-                } else {
+                if (as > 0 && as + 4 < note.length()) memory.rememberFact(note.substring(as + 4).trim(), note.substring(0, as).trim());
+                else {
                     context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().putString("note", note).apply();
                     memory.rememberFact("note", note);
                 }
