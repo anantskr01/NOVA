@@ -18,6 +18,7 @@ public final class NovaAssistant {
     private static final String ENDPOINT = "endpoint";
     private static final String MODEL = "model";
     private static final String WAKE_PHRASE = "hey nova";
+    private static final String LOCAL_ENDPOINT = "local://nova";
 
     private final Context context;
     private final Listener listener;
@@ -36,6 +37,9 @@ public final class NovaAssistant {
         this.context = context.getApplicationContext();
         this.listener = listener;
         prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        if (!prefs.contains(ENDPOINT)) {
+            prefs.edit().putString(ENDPOINT, LOCAL_ENDPOINT).apply();
+        }
         memory = new NovaMemory(this.context);
         secureStore = new NovaSecureStore(this.context);
         apps = new NovaAppCatalog(this.context);
@@ -60,13 +64,14 @@ public final class NovaAssistant {
     }
 
     public void saveAiSettings(String endpoint, String apiKey, String model) {
-        prefs.edit().putString(ENDPOINT, endpoint == null ? "" : endpoint.trim())
+        String cleanEndpoint = endpoint == null ? "" : endpoint.trim();
+        prefs.edit().putString(ENDPOINT, cleanEndpoint.isEmpty() ? LOCAL_ENDPOINT : cleanEndpoint)
                 .putString(MODEL, model == null || model.trim().isEmpty() ? "gpt-4o-mini" : model.trim()).apply();
         secureStore.putApiKey(apiKey == null ? "" : apiKey.trim());
-        status("AI CORE CONFIGURED • KEY PROTECTED");
+        status(cleanEndpoint.isEmpty() ? "AI CORE • LOCAL RUNTIME" : "AI CORE CONFIGURED • KEY PROTECTED");
     }
 
-    public String getEndpoint() { return prefs.getString(ENDPOINT, ""); }
+    public String getEndpoint() { return prefs.getString(ENDPOINT, LOCAL_ENDPOINT); }
     public String getModel() { return prefs.getString(MODEL, "gpt-4o-mini"); }
     public boolean hasAiCore() { return !getEndpoint().trim().isEmpty(); }
 
@@ -93,8 +98,6 @@ public final class NovaAssistant {
         status("PROCESSING • " + command);
 
         try {
-            // Task controls must be handled before skills or the AI fallback.
-            // This guarantees cancellation never falls through to "AI unavailable".
             if (containsAny(c, "stop nova", "stop listening", "be quiet", "stop speaking")) {
                 if (tts != null) tts.stop();
                 taskManager.cancelAll();
@@ -120,7 +123,6 @@ public final class NovaAssistant {
                 return;
             }
 
-            // Accept both typed IDs (NOVA-T0001) and common voice-recognition variants.
             java.util.regex.Matcher cancelTask = java.util.regex.Pattern.compile(
                     "(?i)^cancel\\s+(?:task\\s+)?(?:nova[- ]?t\\s*[- ]?(\\d{1,6})|nova[- ]?t(\\d{1,6}))\\s*$"
             ).matcher(command);
