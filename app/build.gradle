@@ -28,5 +28,4 @@ android {
 
 dependencies {
     implementation 'com.google.mediapipe:tasks-vision:0.10.26'
-    implementation 'dev.ffmpegkit-maintained:llama-android:0.1.1'
 }
