@@ -10,8 +10,6 @@ import android.os.SystemClock;
 import android.provider.CalendarContract;
 import android.provider.Settings;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.Locale;
 import java.util.ArrayList;
 import java.util.List;
@@ -83,12 +81,8 @@ public final class NovaSkillRegistry {
                 context.startActivity(i); callback.reply("Starting navigation to " + place + "."); return true;
             }
         }
-        if (c.startsWith("calculate ") || c.startsWith("what is ") && c.matches(".*[0-9].*[+\\-*/].*[0-9].*")) {
-            String expression = command.replaceFirst("(?i)^calculate\\s+", "").trim();
-            if (expression.startsWith("what is ")) expression = expression.substring(8).trim();
-            String result = calculate(expression);
-            if (result != null) { callback.reply(expression + " = " + result); return true; }
-        }
+        // Open-ended questions and calculations deliberately fall through to NovaBrain.
+        // They must not depend on wording-specific dictionaries or contraction handling.
         Matcher timer = Pattern.compile("(?i)(?:set |start )?(?:a )?timer for (\\d+)\\s*(seconds?|minutes?|mins?|hours?|hrs?)").matcher(command);
         if (timer.find()) {
             long n = Long.parseLong(timer.group(1));
@@ -127,23 +121,4 @@ public final class NovaSkillRegistry {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) alarm.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pi);
         else alarm.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pi);
     }
-
-    private String calculate(String expression) {
-        try {
-            String s = expression.replace("×", "*").replace("÷", "/").replaceAll("[^0-9+\\-*/(). ]", "").trim();
-            if (s.isEmpty()) return null;
-            return format(eval(s));
-        } catch (Exception ignored) { return null; }
-    }
-    private double eval(String s) {
-        return new Object() { int pos = -1, ch;
-            void next(){ ch=++pos<s.length()?s.charAt(pos):-1; }
-            boolean eat(int c){ while(ch==' ')next(); if(ch==c){next();return true;} return false; }
-            double parse(){ next(); double x=parseExpression(); if(pos<s.length()) throw new RuntimeException(); return x; }
-            double parseExpression(){ double x=parseTerm(); for(;;){ if(eat('+'))x+=parseTerm(); else if(eat('-'))x-=parseTerm(); else return x; } }
-            double parseTerm(){ double x=parseFactor(); for(;;){ if(eat('*'))x*=parseFactor(); else if(eat('/'))x/=parseFactor(); else return x; } }
-            double parseFactor(){ if(eat('+'))return parseFactor(); if(eat('-'))return -parseFactor(); int start=pos; if(eat('(')){double x=parseExpression(); if(!eat(')'))throw new RuntimeException(); return x;} while((ch>='0'&&ch<='9')||ch=='.')next(); if(start==pos)throw new RuntimeException(); return Double.parseDouble(s.substring(start,pos)); }
-        }.parse();
-    }
-    private String format(double x) { if (Double.isNaN(x)||Double.isInfinite(x)) return null; if (Math.rint(x)==x) return Long.toString((long)x); return String.format(Locale.US,"%.6f",x).replaceAll("0+$","").replaceAll("\\.$",""); }
 }

@@ -161,7 +161,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="9dp"
-                android:hint="OpenAI-compatible endpoint"
+                android:hint="Ollama or OpenAI-compatible endpoint"
                 android:inputType="textUri"
                 android:textColor="#D9F7FF"
                 android:textColorHint="#5B8B99"
@@ -172,7 +172,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="7dp"
-                android:hint="Model"
+                android:hint="Model (Ollama defaults to qwen2.5:1.5b)"
                 android:inputType="text"
                 android:textColor="#D9F7FF"
                 android:textColorHint="#5B8B99"
@@ -195,6 +195,13 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="9dp"
                 android:text="SAVE AI CORE" />
+
+            <Button
+                android:id="@+id/testAiButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="TEST AI CORE CONNECTION" />
         </LinearLayout>
 
         <LinearLayout
