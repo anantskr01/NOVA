@@ -12,13 +12,14 @@ public interface NovaAiProvider {
         void onError(String message);
     }
 
-    /**
-     * Sends the assembled NOVA conversation to this provider.
-     */
+    /** Stable identifier used by the provider router (for example: local, http, gemini). */
+    default String getId() {
+        return "unknown";
+    }
+
+    /** Sends the assembled NOVA conversation to this provider. */
     void chat(String endpoint, String apiKey, String model, JSONArray messages, Callback callback);
 
-    /**
-     * Releases provider-owned resources.
-     */
+    /** Releases provider-owned resources. */
     void shutdown();
 }
