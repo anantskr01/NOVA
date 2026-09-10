@@ -19,7 +19,7 @@ import java.util.concurrent.Executors;
 
 /** Local-first AI gateway with HTTP fallback, bounded retry, and robust response parsing. */
 public final class NovaAiClient implements NovaAiProvider {
-    public interface Callback { void onResult(String text); void onError(String message); }
+    public interface Callback extends NovaAiProvider.Callback { }
 
     private static final String TAG = "NovaAI";
     private static final int MAX_ATTEMPTS = 3;
