@@ -17,6 +17,7 @@ public final class NovaBrain {
     private static final String PREFS = "nova_ai_settings";
     private static final String ENDPOINT = "endpoint";
     private static final String MODEL = "model";
+    private static final String PROVIDER = "ai_provider";
     private static final int MAX_QUEUE = 6;
     private static final int MAX_AGENT_TURNS = 8;
     private static final int MAX_RELEVANT_FACTS = 8;
@@ -30,7 +31,7 @@ public final class NovaBrain {
     private final Listener listener;
     private final NovaMemory memory;
     private final NovaSecureStore secureStore;
-    private final NovaAiProvider ai = new NovaAiClient();
+    private final NovaAiProvider ai;
     private final NovaActionEngine actions;
     private final NovaAgentPlanner planner;
     private final NovaToolRegistry tools;
@@ -51,6 +52,7 @@ public final class NovaBrain {
         memory = m == null ? new NovaMemory(context) : m;
         secureStore = new NovaSecureStore(context);
         tools = new NovaToolRegistry();
+        ai = new NovaAiProviderRouter(context);
 
         planner = new NovaAgentPlanner(new NovaAgentPlanner.ActionExecutor() {
             @Override
@@ -111,8 +113,8 @@ public final class NovaBrain {
 
     public synchronized void think(String request) {
         if (shutdown || request == null || request.trim().isEmpty()) return;
-        if (getEndpoint().isEmpty()) {
-            reply("My AI core isn't configured yet.");
+        if (getEndpoint().isEmpty() && "http".equals(getProvider())) {
+            reply("My HTTP AI endpoint isn't configured yet.");
             return;
         }
         if (queue.size() >= MAX_QUEUE) {
@@ -132,10 +134,7 @@ public final class NovaBrain {
         status("BRAIN • TASKS CANCELLED");
     }
 
-    public synchronized void cancelQueuedGoals() {
-        cancelAllGoals();
-    }
-
+    public synchronized void cancelQueuedGoals() { cancelAllGoals(); }
     public synchronized int queuedCount() { return queue.size(); }
     public synchronized boolean isBusy() { return processing; }
     public synchronized String activeGoal() { return activeGoal; }
@@ -155,47 +154,34 @@ public final class NovaBrain {
         synchronized (this) {
             if (shutdown || token != generation) return;
         }
-
         if (NovaAgentPolicy.taskExpired(goalStarted)) {
             rememberAndReply("I stopped safely because the task exceeded NOVA's execution time limit.");
             finishGoal(token);
             return;
         }
-
         if (turn >= MAX_AGENT_TURNS) {
             rememberAndReply("I stopped safely after reaching the agent reasoning limit.");
             finishGoal(token);
             return;
         }
 
-        status(recoveryAttempt > 0
-                ? "BRAIN • RECOVERING → REPLANNING"
-                : turn == 0
-                ? "BRAIN • UNDERSTANDING → PLANNING"
-                : "BRAIN • OBSERVING → NEXT STEP");
+        status(recoveryAttempt > 0 ? "BRAIN • RECOVERING → REPLANNING"
+                : turn == 0 ? "BRAIN • UNDERSTANDING → PLANNING" : "BRAIN • OBSERVING → NEXT STEP");
 
         try {
             JSONArray messages = new JSONArray();
-
-            messages.put(new JSONObject()
-                    .put("role", "system")
-                    .put("content", buildSystemPrompt(recoveryAttempt > 0)));
+            messages.put(new JSONObject().put("role", "system").put("content", buildSystemPrompt(recoveryAttempt > 0)));
 
             StringBuilder contextText = new StringBuilder("Relevant saved NOVA memory:\n")
                     .append(memory.searchFacts(goal, MAX_RELEVANT_FACTS))
                     .append("\n\nCurrent UI state:\n")
                     .append(NovaAgentPolicy.bounded(getUiSnapshot(), NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));
-
             if (!feedback.isEmpty()) {
                 contextText.append("\n\nPrevious tool/execution evidence:\n")
                         .append(NovaAgentPolicy.bounded(feedback, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));
             }
-
-            messages.put(new JSONObject()
-                    .put("role", "system")
-                    .put("content", NovaAgentPolicy.bounded(
-                            contextText.toString(),
-                            NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)));
+            messages.put(new JSONObject().put("role", "system").put("content",
+                    NovaAgentPolicy.bounded(contextText.toString(), NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)));
 
             JSONArray history = memory.recent();
             int start = Math.max(0, history.length() - NovaAgentPolicy.MAX_CONTEXT_ITEMS);
@@ -204,98 +190,65 @@ public final class NovaBrain {
                 if (item != null) messages.put(item);
             }
 
-            ai.chat(getEndpoint(), secureStore.getApiKey(), getModel(), messages,
-                    new NovaAiClient.Callback() {
-                        @Override
-                        public void onResult(final String text) {
-                            agentExecutor.execute(() -> {
-                                synchronized (NovaBrain.this) {
-                                    if (shutdown || token != generation) return;
-                                }
-
-                                NovaAgentPlanner.ExecutionResult r = planner.executeDetailed(text);
-
-                                synchronized (NovaBrain.this) {
-                                    if (shutdown || token != generation) return;
-                                }
-
-                                if (!r.planValid) {
-                                    if (recoveryAttempt < 1) {
-                                        main.post(() -> askAi(
-                                                goal,
-                                                recoveryAttempt + 1,
-                                                "Invalid plan: " + r.failedAction,
-                                                token,
-                                                turn + 1,
-                                                goalStarted));
-                                    } else {
-                                        rememberAndReply("I couldn't produce a safe executable plan.");
-                                        finishGoal(token);
-                                    }
-                                    return;
-                                }
-
-                                if (!r.toolResults.isEmpty()) {
-                                    main.post(() -> askAi(
-                                            goal,
-                                            0,
-                                            r.toolResults,
-                                            token,
-                                            turn + 1,
-                                            goalStarted));
-                                    return;
-                                }
-
-                                if (r.completed) {
-                                    if (prematureCompletion(goal, r.finalScreen)) {
-                                        main.post(() -> askAi(
-                                                goal,
-                                                0,
-                                                "NOVA must not claim this goal is complete yet. The current UI does not provide evidence for the requested final state. Re-observe the UI and continue with the next necessary action. Current UI:\n"
-                                                        + NovaAgentPolicy.bounded(
-                                                        r.finalScreen,
-                                                        NovaAgentPolicy.MAX_TOOL_RESULT_CHARS),
-                                                token,
-                                                turn + 1,
-                                                goalStarted));
-                                        return;
-                                    }
-
-                                    if (!r.say.isEmpty()) rememberAndReply(r.say);
-                                    finishGoal(token);
-                                    return;
-                                }
-
-                                if (recoveryAttempt < 1) {
-                                    String failure = "Failed action: " + r.failedAction
-                                            + "\nObserved UI after failure:\n" + r.finalScreen;
-                                    main.post(() -> askAi(
-                                            goal,
-                                            recoveryAttempt + 1,
-                                            failure,
-                                            token,
-                                            turn + 1,
-                                            goalStarted));
-                                } else {
-                                    rememberAndReply(
-                                            r.failedAction.isEmpty()
-                                                    ? "I couldn't complete that task safely."
-                                                    : "I couldn't complete the task safely at: " + r.failedAction + "."
-                                    );
-                                    finishGoal(token);
-                                }
-                            });
+            ai.chat(getEndpoint(), secureStore.getApiKey(), getModel(), messages, new NovaAiProvider.Callback() {
+                @Override
+                public void onResult(final String text) {
+                    agentExecutor.execute(() -> {
+                        synchronized (NovaBrain.this) {
+                            if (shutdown || token != generation) return;
                         }
-
-                        @Override
-                        public void onError(String message) {
-                            synchronized (NovaBrain.this) {
-                                if (shutdown || token != generation) return;
+                        NovaAgentPlanner.ExecutionResult r = planner.executeDetailed(text);
+                        synchronized (NovaBrain.this) {
+                            if (shutdown || token != generation) return;
+                        }
+                        if (!r.planValid) {
+                            if (recoveryAttempt < 1) {
+                                main.post(() -> askAi(goal, recoveryAttempt + 1, "Invalid plan: " + r.failedAction,
+                                        token, turn + 1, goalStarted));
+                            } else {
+                                rememberAndReply("I couldn't produce a safe executable plan.");
+                                finishGoal(token);
                             }
-                            rememberAndReply("My AI core is unavailable right now. " + message);
+                            return;
+                        }
+                        if (!r.toolResults.isEmpty()) {
+                            main.post(() -> askAi(goal, 0, r.toolResults, token, turn + 1, goalStarted));
+                            return;
+                        }
+                        if (r.completed) {
+                            if (prematureCompletion(goal, r.finalScreen)) {
+                                main.post(() -> askAi(goal, 0,
+                                        "NOVA must not claim this goal is complete yet. The current UI does not provide evidence for the requested final state. Re-observe the UI and continue with the next necessary action. Current UI:\n"
+                                                + NovaAgentPolicy.bounded(r.finalScreen, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS),
+                                        token, turn + 1, goalStarted));
+                                return;
+                            }
+                            if (!r.say.isEmpty()) rememberAndReply(r.say);
+                            finishGoal(token);
+                            return;
+                        }
+                        if (recoveryAttempt < 1) {
+                            String failure = "Failed action: " + r.failedAction
+                                    + "\nObserved UI after failure:\n" + r.finalScreen;
+                            main.post(() -> askAi(goal, recoveryAttempt + 1, failure, token, turn + 1, goalStarted));
+                        } else {
+                            rememberAndReply(r.failedAction.isEmpty()
+                                    ? "I couldn't complete that task safely."
+                                    : "I couldn't complete the task safely at: " + r.failedAction + ".");
                             finishGoal(token);
                         }
                     });
+                }
+
+                @Override
+                public void onError(String message) {
+                    synchronized (NovaBrain.this) {
+                        if (shutdown || token != generation) return;
+                    }
+                    rememberAndReply("My AI core is unavailable right now. " + message);
+                    finishGoal(token);
+                }
+            });
         } catch (Exception e) {
             Log.e(TAG, "AI REQUEST PREPARATION ERROR", e);
             rememberAndReply("I couldn't prepare the AI request.");
@@ -305,13 +258,10 @@ public final class NovaBrain {
 
     private String buildSystemPrompt(boolean recovery) {
         StringBuilder p = new StringBuilder();
-
         p.append("You are NOVA, a careful general-purpose Android agent. Understand the user's goal, inspect the current UI state, choose the smallest correct next action, and return JSON only. ")
                 .append("Never claim success without evidence. A goal is NOT complete merely because an app was opened; every requested outcome must be observed and verified. ")
-                .append("Use at most ").append(NovaAgentPolicy.MAX_STEPS)
-                .append(" actions per reasoning turn and at most ").append(MAX_AGENT_TURNS)
-                .append(" reasoning turns per goal.\n");
-
+                .append("Use at most ").append(NovaAgentPolicy.MAX_STEPS).append(" actions per reasoning turn and at most ")
+                .append(MAX_AGENT_TURNS).append(" reasoning turns per goal.\n");
         p.append("Schema: {\"say\":\"short final response\",\"actions\":[{\"type\":\"tool\",\"value\":\"value\"}]}. ")
                 .append("If more work is needed, issue the next tool call instead of claiming completion. ")
                 .append("For multi-step UI goals, use ONE state-changing Android action per turn. After that action, rely on the fresh UI state supplied on the next reasoning turn. ")
@@ -320,17 +270,11 @@ public final class NovaBrain {
                 .append("Use click_index only when the current observed UI clearly provides a reliable numbered target. ")
                 .append("Never choose an action solely from memory when the current UI contradicts it. ")
                 .append("Keep web-dependent actions in separate turns so returned evidence can be inspected.\n");
-
         p.append("Available tools:\n").append(tools.promptSummary());
-
         p.append("\nObservation rules: screen_observe/read_screen describe the current accessibility UI tree. Treat that observation as potentially time-sensitive and re-observe after UI mutations. ")
                 .append("Use memory_search only for relevant saved facts. Use remember only for durable facts/preferences explicitly provided by the user. ")
                 .append("Use parallel only for independent informational tools; never parallelize Android UI mutations. Prefer reversible actions and stop for unavailable permissions/authentication.");
-
-        if (recovery) {
-            p.append("\nRecovery mode: diagnose the supplied failure/evidence, re-observe the current UI, and choose a meaningfully different safe approach. Do not blindly repeat a failed action.");
-        }
-
+        if (recovery) p.append("\nRecovery mode: diagnose the supplied failure/evidence, re-observe the current UI, and choose a meaningfully different safe approach. Do not blindly repeat a failed action.");
         return p.toString();
     }
 
@@ -338,7 +282,6 @@ public final class NovaBrain {
         String g = goal == null ? "" : goal.trim().toLowerCase();
         String s = screen == null ? "" : screen.trim().toLowerCase();
         if (g.isEmpty() || s.isEmpty()) return false;
-
         if (g.matches(".*\\b(search|find|look up)\\b.*")) {
             String phrase = extractSearchPhrase(g);
             if (!phrase.isEmpty()) {
@@ -372,13 +315,9 @@ public final class NovaBrain {
             if ("web_fetch".equals(type)) return ok(web.fetch(value));
             if ("web_research".equals(type)) return ok(web.search(value, 6));
             if ("screen_observe".equals(type) || "read_screen".equals(type)) {
-                return "{\"ok\":true,\"text\":\""
-                        + escape(NovaAgentPolicy.bounded(getUiSnapshot(), NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))
-                        + "\"}";
+                return "{\"ok\":true,\"text\":\"" + escape(NovaAgentPolicy.bounded(getUiSnapshot(), NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)) + "\"}";
             }
-            if ("memory_search".equals(type)) {
-                return "{\"ok\":true,\"facts\":" + memory.searchFacts(value, 8) + "}";
-            }
+            if ("memory_search".equals(type)) return "{\"ok\":true,\"facts\":" + memory.searchFacts(value, 8) + "}";
             if ("remember".equals(type)) {
                 JSONObject o = new JSONObject(value);
                 String k = o.optString("key", "").trim();
@@ -389,33 +328,24 @@ public final class NovaBrain {
             }
             return "{\"ok\":false,\"error\":\"unknown_intelligence_tool\"}";
         } catch (Exception e) {
-            return "{\"ok\":false,\"error\":\""
-                    + escape(e.getMessage() == null ? "tool_failed" : e.getMessage())
-                    + "\"}";
+            return "{\"ok\":false,\"error\":\"" + escape(e.getMessage() == null ? "tool_failed" : e.getMessage()) + "\"}";
         }
     }
 
     private String executeParallelTools(String value) {
         try {
             JSONArray steps = new JSONArray(value);
-            if (steps.length() == 0 || steps.length() > NovaAgentPolicy.MAX_STEPS) {
-                return "{\"ok\":false,\"error\":\"parallel_step_limit\"}";
-            }
+            if (steps.length() == 0 || steps.length() > NovaAgentPolicy.MAX_STEPS) return "{\"ok\":false,\"error\":\"parallel_step_limit\"}";
             for (int i = 0; i < steps.length(); i++) {
                 JSONObject s = steps.optJSONObject(i);
-                if (s == null) {
-                    return "{\"ok\":false,\"error\":\"parallel_invalid_step\"}";
-                }
+                if (s == null) return "{\"ok\":false,\"error\":\"parallel_invalid_step\"}";
                 String type = s.optString("type", "").trim().toLowerCase();
                 String validation = NovaActionSchema.validate(s);
                 if (!NovaActionSchema.isInformational(type) || !NovaActionSchema.canRunInParallel(type) || !validation.isEmpty()) {
-                    return "{\"ok\":false,\"error\":\"parallel_only_allows_valid_informational_tools\",\"detail\":\""
-                            + escape(validation.isEmpty() ? type : validation) + "\"}";
+                    return "{\"ok\":false,\"error\":\"parallel_only_allows_valid_informational_tools\",\"detail\":\"" + escape(validation.isEmpty() ? type : validation) + "\"}";
                 }
             }
-            JSONArray out = orchestrator.executeParallel(
-                    toOrchestratorSteps(steps),
-                    (tool, input) -> executeToolJson(tool, input));
+            JSONArray out = orchestrator.executeParallel(toOrchestratorSteps(steps), (tool, input) -> executeToolJson(tool, input));
             return "{\"ok\":true,\"parallel_results\":" + out + "}";
         } catch (Exception e) {
             return "{\"ok\":false,\"error\":\"parallel_failed\"}";
@@ -426,49 +356,29 @@ public final class NovaBrain {
         JSONArray out = new JSONArray();
         for (int i = 0; i < source.length(); i++) {
             JSONObject s = source.optJSONObject(i);
-            if (s != null) {
-                out.put(new JSONObject()
-                        .put("id", s.optString("id", String.valueOf(i)))
-                        .put("tool", s.optString("type", ""))
-                        .put("input", new JSONObject().put("value", s.optString("value", ""))));
-            }
+            if (s != null) out.put(new JSONObject().put("id", s.optString("id", String.valueOf(i)))
+                    .put("tool", s.optString("type", ""))
+                    .put("input", new JSONObject().put("value", s.optString("value", ""))));
         }
         return out;
     }
 
     private JSONObject executeToolJson(String tool, JSONObject input) {
         try {
-            return new JSONObject(executeIntelligenceTool(
-                    tool,
-                    input == null ? "" : input.optString("value", "")));
+            return new JSONObject(executeIntelligenceTool(tool, input == null ? "" : input.optString("value", "")));
         } catch (Exception e) {
-            try {
-                return new JSONObject().put("ok", false).put("error", "tool_failed");
-            } catch (Exception ignored) {
-                return new JSONObject();
-            }
+            try { return new JSONObject().put("ok", false).put("error", "tool_failed"); }
+            catch (Exception ignored) { return new JSONObject(); }
         }
-    }
-
-    private boolean isInformational(String t) {
-        return NovaActionSchema.isInformational(t);
     }
 
     private String ok(String payload) {
-        try {
-            JSONObject o = new JSONObject(payload);
-            o.put("ok", true);
-            return o.toString();
-        } catch (Exception e) {
-            return "{\"ok\":true,\"data\":\"" + escape(payload) + "\"}";
-        }
+        try { JSONObject o = new JSONObject(payload); o.put("ok", true); return o.toString(); }
+        catch (Exception e) { return "{\"ok\":true,\"data\":\"" + escape(payload) + "\"}"; }
     }
 
     private String escape(String s) {
-        return s == null ? "" : s.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\r", " ")
-                .replace("\n", " ");
+        return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", " ").replace("\n", " ");
     }
 
     private void finishGoal(long token) {
@@ -479,20 +389,21 @@ public final class NovaBrain {
             if (!queue.isEmpty()) {
                 status("BRAIN • NEXT GOAL");
                 processNextLocked();
-            } else {
-                status("BRAIN • IDLE");
-            }
+            } else status("BRAIN • IDLE");
         }
     }
 
-    private String getEndpoint() {
+    private String getProvider() {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(ENDPOINT, "").trim();
+                .getString(PROVIDER, "auto").trim().toLowerCase(java.util.Locale.US);
+    }
+
+    private String getEndpoint() {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ENDPOINT, "").trim();
     }
 
     private String getModel() {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(MODEL, "gpt-4o-mini").trim();
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(MODEL, "gpt-4o-mini").trim();
     }
 
     private String getUiSnapshot() {
@@ -507,24 +418,19 @@ public final class NovaBrain {
         reply(value);
     }
 
-    private void status(String text) {
-        if (listener != null) main.post(() -> listener.onStatus(text));
-    }
-
-    private void reply(String text) {
-        if (listener != null) main.post(() -> listener.onReply(text));
-    }
+    private void status(String text) { if (listener != null) main.post(() -> listener.onStatus(text)); }
+    private void reply(String text) { if (listener != null) main.post(() -> listener.onReply(text)); }
 
     public void shutdown() {
         synchronized (this) {
             shutdown = true;
             generation++;
             queue.clear();
-            activeGoal = "";
             processing = false;
+            activeGoal = "";
         }
-        orchestrator.shutdown();
         agentExecutor.shutdownNow();
         ai.shutdown();
+        web.shutdown();
     }
 }
