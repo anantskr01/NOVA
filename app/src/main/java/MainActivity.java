@@ -2,6 +2,7 @@ package com.aircontrol;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.content.pm.PackageManager;
@@ -75,6 +76,7 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
                     aiKeyInput.getText().toString(),
                     aiModelInput.getText().toString());
             Toast.makeText(this, "NOVA AI settings saved securely", Toast.LENGTH_SHORT).show();
+            showProviderDialog();
         });
         findViewById(R.id.accessibilityButton).setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         findViewById(R.id.notificationButton).setOnClickListener(v -> startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")));
@@ -86,6 +88,28 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
         }
         requestNotificationPermission();
         checkCameraPermission();
+    }
+
+    private void showProviderDialog() {
+        NovaAiProviderRouter router = new NovaAiProviderRouter(this);
+        String[] providers = {"Auto • Local first, HTTP fallback", "Local • On-device AI only", "HTTP • Remote AI only"};
+        String current = router.getConfiguredProvider();
+        int checked = NovaAiProviderRouter.LOCAL.equals(current) ? 1
+                : NovaAiProviderRouter.HTTP.equals(current) ? 2 : 0;
+
+        new AlertDialog.Builder(this)
+                .setTitle("NOVA AI PROVIDER")
+                .setSingleChoiceItems(providers, checked, (dialog, which) -> {
+                    String selected = which == 1 ? NovaAiProviderRouter.LOCAL
+                            : which == 2 ? NovaAiProviderRouter.HTTP : NovaAiProviderRouter.AUTO;
+                    router.setConfiguredProvider(selected);
+                    assistantStatusText.setText("AI • PROVIDER: " + selected.toUpperCase(Locale.ROOT));
+                    Toast.makeText(this, "NOVA provider set to " + selected, Toast.LENGTH_SHORT).show();
+                    dialog.dismiss();
+                    router.shutdown();
+                })
+                .setNegativeButton("CANCEL", (dialog, which) -> router.shutdown())
+                .show();
     }
 
     private void executeTypedCommand() {
