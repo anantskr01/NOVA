@@ -1,6 +1,5 @@
 package com.aircontrol;
 
-import android.content.Context;
 import org.json.JSONArray;
 
 /** Compatibility gateway used by NovaBrain; delegates provider selection to NovaAiProviderRouter. */
@@ -10,22 +9,26 @@ public final class NovaAiClient {
         void onError(String message);
     }
 
-    private NovaAiProviderRouter router;
+    private final NovaAiProviderRouter router;
 
-    /** Kept for compatibility with older callers. Context is required for provider preferences. */
-    public void chat(String endpoint, String apiKey, String model, JSONArray messages, Callback callback) {
-        throw new IllegalStateException("NovaAiClient requires a Context; use NovaAiClient(Context)");
+    /** Legacy constructor retained for NovaBrain compatibility. */
+    public NovaAiClient() {
+        router = new NovaAiProviderRouter();
     }
 
-    public NovaAiClient(Context context) {
+    /** Context-aware constructor for newer callers. */
+    public NovaAiClient(android.content.Context context) {
         router = new NovaAiProviderRouter(context);
     }
 
-    public void chat(String endpoint, String apiKey, String model, JSONArray messages, NovaAiProvider.Callback callback) {
-        router.chat(endpoint, apiKey, model, messages, callback);
+    public void chat(String endpoint, String apiKey, String model, JSONArray messages, Callback callback) {
+        router.chat(endpoint, apiKey, model, messages, new NovaAiProvider.Callback() {
+            @Override public void onResult(String text) { callback.onResult(text); }
+            @Override public void onError(String message) { callback.onError(message); }
+        });
     }
 
     public void shutdown() {
-        if (router != null) router.shutdown();
+        router.shutdown();
     }
 }
