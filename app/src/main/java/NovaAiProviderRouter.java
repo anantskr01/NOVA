@@ -11,11 +11,21 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
     public static final String LOCAL = "local";
     public static final String HTTP = "http";
 
+    private static volatile String processProvider = AUTO;
     private final Context context;
     private final NovaLocalAiProvider local = new NovaLocalAiProvider();
     private final NovaHttpAiProvider http = new NovaHttpAiProvider();
 
-    public NovaAiProviderRouter(Context context) { this.context = context.getApplicationContext(); }
+    /** Context-free compatibility constructor for legacy NovaBrain/NovaAiClient callers. */
+    public NovaAiProviderRouter() { this.context = null; }
+
+    public NovaAiProviderRouter(Context context) {
+        this.context = context == null ? null : context.getApplicationContext();
+        if (this.context != null) {
+            processProvider = normalize(this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString(PROVIDER, AUTO));
+        }
+    }
 
     @Override public String getId() { return "router"; }
 
@@ -24,7 +34,11 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
     public boolean setConfiguredProvider(String providerId) {
         String normalized = normalize(providerId);
         if (normalized.isEmpty()) return false;
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(PROVIDER, normalized).apply();
+        processProvider = normalized;
+        if (context != null) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putString(PROVIDER, normalized).apply();
+        }
         return true;
     }
 
@@ -51,7 +65,11 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
     }
 
     private String configuredProvider() {
-        return normalize(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(PROVIDER, AUTO));
+        if (context != null) {
+            processProvider = normalize(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString(PROVIDER, processProvider));
+        }
+        return normalize(processProvider);
     }
 
     private String normalize(String providerId) {
