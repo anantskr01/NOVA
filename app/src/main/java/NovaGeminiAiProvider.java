@@ -15,7 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Gemini cloud provider using Google's REST API. API keys are supplied at runtime and never stored here. */
+/** Gemini cloud provider using Google's REST API. API keys are supplied at runtime or from local BuildConfig. */
 public final class NovaGeminiAiProvider implements NovaAiProvider {
     private static final String TAG = "NovaGeminiAI";
     private static final String DEFAULT_MODEL = "gemini-3.8-flash";
@@ -33,10 +33,11 @@ public final class NovaGeminiAiProvider implements NovaAiProvider {
         executor.execute(() -> {
             try {
                 String key = apiKey == null ? "" : apiKey.trim();
+                if (key.isEmpty()) key = BuildConfig.GEMINI_API_KEY == null ? "" : BuildConfig.GEMINI_API_KEY.trim();
                 if (key.isEmpty()) throw new IllegalArgumentException("Gemini API key is not configured");
 
-                String selectedModel = model == null || model.trim().isEmpty()
-                        ? DEFAULT_MODEL : model.trim();
+                String selectedModel = model == null ? "" : model.trim();
+                if (selectedModel.isEmpty() || selectedModel.startsWith("gpt-")) selectedModel = DEFAULT_MODEL;
                 String urlText = BASE_URL + selectedModel + ":generateContent";
 
                 HttpURLConnection connection = (HttpURLConnection) new URL(urlText).openConnection();
