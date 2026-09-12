@@ -9,7 +9,6 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.content.SharedPreferences;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
@@ -92,16 +91,24 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
 
     private void showProviderDialog() {
         NovaAiProviderRouter router = new NovaAiProviderRouter(this);
-        String[] providers = {"Auto • Local first, HTTP fallback", "Local • On-device AI only", "HTTP • Remote AI only"};
+        String[] providers = {
+                "Auto • Local → HTTP → Gemini",
+                "Local • On-device AI only",
+                "HTTP • Remote AI only",
+                "Gemini • Google Cloud AI"
+        };
         String current = router.getConfiguredProvider();
         int checked = NovaAiProviderRouter.LOCAL.equals(current) ? 1
-                : NovaAiProviderRouter.HTTP.equals(current) ? 2 : 0;
+                : NovaAiProviderRouter.HTTP.equals(current) ? 2
+                : NovaAiProviderRouter.GEMINI.equals(current) ? 3 : 0;
 
         new AlertDialog.Builder(this)
                 .setTitle("NOVA AI PROVIDER")
                 .setSingleChoiceItems(providers, checked, (dialog, which) -> {
                     String selected = which == 1 ? NovaAiProviderRouter.LOCAL
-                            : which == 2 ? NovaAiProviderRouter.HTTP : NovaAiProviderRouter.AUTO;
+                            : which == 2 ? NovaAiProviderRouter.HTTP
+                            : which == 3 ? NovaAiProviderRouter.GEMINI
+                            : NovaAiProviderRouter.AUTO;
                     router.setConfiguredProvider(selected);
                     assistantStatusText.setText("AI • PROVIDER: " + selected.toUpperCase(Locale.ROOT));
                     Toast.makeText(this, "NOVA provider set to " + selected, Toast.LENGTH_SHORT).show();
