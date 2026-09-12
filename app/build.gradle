@@ -1,3 +1,8 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
 def geminiProperties = new Properties()
 def geminiPropertiesFile = rootProject.file("gemini.properties")
 if (geminiPropertiesFile.exists()) {
@@ -10,11 +15,6 @@ def geminiApiKey = geminiProperties.getProperty("GEMINI_API_KEY", "").trim()
 def escapedGeminiApiKey = geminiApiKey
         .replace("\\", "\\\\")
         .replace("\"", "\\\"")
-
-plugins {
-    id 'com.android.application'
-    id 'org.jetbrains.kotlin.android'
-}
 
 android {
     namespace 'com.aircontrol'
