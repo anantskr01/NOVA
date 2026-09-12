@@ -19,6 +19,7 @@ public final class NovaAssistant {
     private static final String MODEL = "model";
     private static final String WAKE_PHRASE = "hey nova";
     private static final String LOCAL_ENDPOINT = "local://nova";
+    private static final String DEFAULT_MODEL = "gemini-3.8-flash";
 
     private final Context context;
     private final Listener listener;
@@ -65,14 +66,19 @@ public final class NovaAssistant {
 
     public void saveAiSettings(String endpoint, String apiKey, String model) {
         String cleanEndpoint = endpoint == null ? "" : endpoint.trim();
+        String cleanModel = model == null ? "" : model.trim();
+        if (cleanModel.isEmpty() || cleanModel.startsWith("gpt-")) cleanModel = DEFAULT_MODEL;
         prefs.edit().putString(ENDPOINT, cleanEndpoint.isEmpty() ? LOCAL_ENDPOINT : cleanEndpoint)
-                .putString(MODEL, model == null || model.trim().isEmpty() ? "gpt-4o-mini" : model.trim()).apply();
+                .putString(MODEL, cleanModel).apply();
         secureStore.putApiKey(apiKey == null ? "" : apiKey.trim());
         status(cleanEndpoint.isEmpty() ? "AI CORE • LOCAL RUNTIME" : "AI CORE CONFIGURED • KEY PROTECTED");
     }
 
     public String getEndpoint() { return prefs.getString(ENDPOINT, LOCAL_ENDPOINT); }
-    public String getModel() { return prefs.getString(MODEL, "gpt-4o-mini"); }
+    public String getModel() {
+        String model = prefs.getString(MODEL, DEFAULT_MODEL);
+        return model == null || model.trim().isEmpty() || model.trim().startsWith("gpt-") ? DEFAULT_MODEL : model.trim();
+    }
     public boolean hasAiCore() { return !getEndpoint().trim().isEmpty(); }
 
     public void handleVoice(String raw) {
