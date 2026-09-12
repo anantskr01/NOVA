@@ -9,7 +9,7 @@ import android.util.Log;
 
 import java.util.Locale;
 
-/** NOVA interaction gateway: deterministic local skills first, then the central AI Brain. */
+/** NOVA interaction gateway: deterministic local skills first, then explicit CHAT vs AGENT routing. */
 public final class NovaAssistant {
     public interface Listener { void onStatus(String text); }
 
@@ -32,15 +32,15 @@ public final class NovaAssistant {
     private final NovaActionEngine actions;
     private final NovaBrain brain;
     private final NovaTaskManager taskManager;
+    private final NovaRequestRouter requestRouter = new NovaRequestRouter();
+    private final NovaConversationService conversation;
     private TextToSpeech tts;
 
     public NovaAssistant(Context context, Listener listener) {
         this.context = context.getApplicationContext();
         this.listener = listener;
         prefs = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (!prefs.contains(ENDPOINT)) {
-            prefs.edit().putString(ENDPOINT, LOCAL_ENDPOINT).apply();
-        }
+        if (!prefs.contains(ENDPOINT)) prefs.edit().putString(ENDPOINT, LOCAL_ENDPOINT).apply();
         memory = new NovaMemory(this.context);
         secureStore = new NovaSecureStore(this.context);
         apps = new NovaAppCatalog(this.context);
@@ -53,6 +53,7 @@ public final class NovaAssistant {
             @Override public void onReply(String text) { NovaAssistant.this.say(text); }
         });
         taskManager = new NovaTaskManager(brain);
+        conversation = new NovaConversationService(this.context, memory);
         skills = new NovaSkillRegistry(this.context, new NovaSkillRegistry.Callback() {
             @Override public void reply(String text) { NovaAssistant.this.say(text); }
             @Override public void status(String text) { NovaAssistant.this.status(text); }
@@ -111,12 +112,10 @@ public final class NovaAssistant {
                 return;
             }
             if (containsAny(c, "task status", "show tasks", "list tasks", "what tasks are running", "task list")) {
-                say(taskManager.statusText());
-                return;
+                say(taskManager.statusText()); return;
             }
             if (containsAny(c, "active task", "what are you doing", "what task are you running")) {
-                say(taskManager.activeText());
-                return;
+                say(taskManager.activeText()); return;
             }
             if (containsAny(c, "cancel queued tasks", "cancel queued goals")) {
                 int count = taskManager.cancelQueued();
@@ -124,9 +123,7 @@ public final class NovaAssistant {
                 return;
             }
             if (c.equals("cancel tasks") || c.equals("cancel all tasks") || c.equals("cancel all")) {
-                taskManager.cancelAll();
-                say("All NOVA tasks have been cancelled.");
-                return;
+                taskManager.cancelAll(); say("All NOVA tasks have been cancelled."); return;
             }
 
             java.util.regex.Matcher cancelTask = java.util.regex.Pattern.compile(
@@ -170,14 +167,24 @@ public final class NovaAssistant {
                 GestureAccessibilityService service = GestureAccessibilityService.getInstance();
                 int index = Integer.parseInt(numbered.group(1));
                 boolean ok = service != null && service.clickVisibleIndex(index);
-                say(ok ? "Done." : "I couldn't activate that visible item.");
-                return;
+                say(ok ? "Done." : "I couldn't activate that visible item."); return;
             }
 
             if (c.startsWith("open ")) {
                 if (openByName(command.substring(5).trim())) return;
             }
 
+            // Explicit CHAT route: no task manager, no NovaBrain, no planner, no UI snapshot.
+            if (requestRouter.route(command) == NovaRequestRouter.Route.CHAT) {
+                status("NOVA • CHAT");
+                conversation.chat(command, new NovaConversationService.Listener() {
+                    @Override public void onStatus(String text) { NovaAssistant.this.status(text); }
+                    @Override public void onReply(String text) { NovaAssistant.this.say(text); }
+                });
+                return;
+            }
+
+            // Explicit AGENT route: only now enter the full task/Brain pipeline.
             if (hasAiCore()) {
                 int priority = parsePriority(c);
                 String goal = stripPriorityPrefix(command, c);
@@ -187,7 +194,7 @@ public final class NovaAssistant {
                 return;
             }
 
-            say("I can do built-in tablet tasks now. Configure an OpenAI-compatible AI endpoint for open-ended reasoning and multi-step planning.");
+            say("I can do built-in tablet tasks now. Configure an AI provider for open-ended agent tasks.");
         } catch (Exception e) {
             Log.e(TAG, "COMMAND ERROR", e);
             say("I couldn't complete that action. Check that the required Android permission is enabled.");
@@ -215,29 +222,24 @@ public final class NovaAssistant {
         if (c.equals("forget everything") || c.equals("clear memory") || c.equals("delete my memory")) {
             memory.clear();
             context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().clear().apply();
-            taskManager.cancelAll();
-            say("Local NOVA memory has been cleared.");
-            return true;
+            taskManager.cancelAll(); say("Local NOVA memory has been cleared."); return true;
         }
         if (c.startsWith("remember ")) {
             String note = original.substring(9).trim();
             if (!note.isEmpty()) {
                 int as = note.toLowerCase(Locale.ROOT).indexOf(" as ");
-                if (as > 0 && as + 4 < note.length()) {
-                    memory.rememberFact(note.substring(as + 4).trim(), note.substring(0, as).trim());
-                } else {
+                if (as > 0 && as + 4 < note.length()) memory.rememberFact(note.substring(as + 4).trim(), note.substring(0, as).trim());
+                else {
                     context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().putString("note", note).apply();
                     memory.rememberFact("note", note);
                 }
-                say("I'll remember that locally on this tablet.");
-                return true;
+                say("I'll remember that locally on this tablet."); return true;
             }
         }
         if (containsAny(c, "what do you remember", "what do you know about me")) {
             String note = memory.factsSummary();
             if (note.equals("No saved facts.")) note = context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).getString("note", note);
-            say(note);
-            return true;
+            say(note); return true;
         }
         return false;
     }
@@ -302,6 +304,7 @@ public final class NovaAssistant {
         if (tts != null) { try { tts.stop(); tts.shutdown(); } catch (Exception ignored) { } tts = null; }
         taskManager.shutdown();
         brain.shutdown();
+        conversation.shutdown();
         web.shutdown();
     }
 }
