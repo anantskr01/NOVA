@@ -2,6 +2,7 @@
 build/
 **/build/
 local.properties
+gemini.properties
 .idea/
 *.iml
 .DS_Store
