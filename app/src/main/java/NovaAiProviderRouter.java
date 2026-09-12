@@ -10,11 +10,13 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
     public static final String AUTO = "auto";
     public static final String LOCAL = "local";
     public static final String HTTP = "http";
+    public static final String GEMINI = "gemini";
 
     private static volatile String processProvider = AUTO;
     private final Context context;
     private final NovaLocalAiProvider local = new NovaLocalAiProvider();
     private final NovaHttpAiProvider http = new NovaHttpAiProvider();
+    private final NovaGeminiAiProvider gemini = new NovaGeminiAiProvider();
 
     /** Context-free compatibility constructor for legacy NovaBrain/NovaAiClient callers. */
     public NovaAiProviderRouter() { this.context = null; }
@@ -33,7 +35,7 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
 
     public boolean setConfiguredProvider(String providerId) {
         String normalized = normalize(providerId);
-        if (normalized.isEmpty()) return false;
+        if (!isBuiltInProvider(normalized)) return false;
         processProvider = normalized;
         if (context != null) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -46,7 +48,7 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
 
     public boolean isBuiltInProvider(String providerId) {
         String id = normalize(providerId);
-        return AUTO.equals(id) || LOCAL.equals(id) || HTTP.equals(id);
+        return AUTO.equals(id) || LOCAL.equals(id) || HTTP.equals(id) || GEMINI.equals(id);
     }
 
     @Override
@@ -54,10 +56,18 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
         String mode = configuredProvider();
         if (LOCAL.equals(mode)) { local.chat(endpoint, apiKey, model, messages, callback); return; }
         if (HTTP.equals(mode)) { http.chat(endpoint, apiKey, model, messages, callback); return; }
+        if (GEMINI.equals(mode)) { gemini.chat(endpoint, apiKey, model, messages, callback); return; }
         if (AUTO.equals(mode) || mode.isEmpty()) {
             local.chat(endpoint, apiKey, model, messages, new Callback() {
                 @Override public void onResult(String text) { callback.onResult(text); }
-                @Override public void onError(String message) { http.chat(endpoint, apiKey, model, messages, callback); }
+                @Override public void onError(String message) {
+                    http.chat(endpoint, apiKey, model, messages, new Callback() {
+                        @Override public void onResult(String text) { callback.onResult(text); }
+                        @Override public void onError(String httpError) {
+                            gemini.chat(endpoint, apiKey, model, messages, callback);
+                        }
+                    });
+                }
             });
             return;
         }
@@ -76,5 +86,9 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
         return providerId == null ? "" : providerId.trim().toLowerCase(java.util.Locale.US);
     }
 
-    @Override public void shutdown() { local.shutdown(); http.shutdown(); }
+    @Override public void shutdown() {
+        local.shutdown();
+        http.shutdown();
+        gemini.shutdown();
+    }
 }
