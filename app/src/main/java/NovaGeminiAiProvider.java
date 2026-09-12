@@ -37,8 +37,7 @@ public final class NovaGeminiAiProvider implements NovaAiProvider {
 
                 String selectedModel = model == null || model.trim().isEmpty()
                         ? DEFAULT_MODEL : model.trim();
-                String urlText = BASE_URL + selectedModel + ":generateContent?key=" +
-                        java.net.URLEncoder.encode(key, "UTF-8");
+                String urlText = BASE_URL + selectedModel + ":generateContent";
 
                 HttpURLConnection connection = (HttpURLConnection) new URL(urlText).openConnection();
                 try {
@@ -49,6 +48,7 @@ public final class NovaGeminiAiProvider implements NovaAiProvider {
                     connection.setUseCaches(false);
                     connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
                     connection.setRequestProperty("Accept", "application/json");
+                    connection.setRequestProperty("x-goog-api-key", key);
 
                     JSONObject body = new JSONObject();
                     JSONArray contents = new JSONArray();
@@ -60,8 +60,8 @@ public final class NovaGeminiAiProvider implements NovaAiProvider {
                         if (content.isEmpty()) continue;
 
                         JSONObject item = new JSONObject();
-                        item.put("role", "system".equals(role) ? "user" :
-                                ("assistant".equals(role) ? "model" : "user"));
+                        item.put("role", "system".equals(role) ? "user"
+                                : ("assistant".equals(role) ? "model" : "user"));
                         JSONArray parts = new JSONArray();
                         parts.put(new JSONObject().put("text", content));
                         item.put("parts", parts);
