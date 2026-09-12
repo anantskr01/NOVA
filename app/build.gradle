@@ -1,3 +1,16 @@
+def geminiProperties = new Properties()
+def geminiPropertiesFile = rootProject.file("gemini.properties")
+if (geminiPropertiesFile.exists()) {
+    geminiPropertiesFile.withInputStream { stream ->
+        geminiProperties.load(stream)
+    }
+}
+
+def geminiApiKey = geminiProperties.getProperty("GEMINI_API_KEY", "").trim()
+def escapedGeminiApiKey = geminiApiKey
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
@@ -7,12 +20,17 @@ android {
     namespace 'com.aircontrol'
     compileSdk 35
 
+    buildFeatures {
+        buildConfig true
+    }
+
     defaultConfig {
         applicationId 'com.aircontrol'
         minSdk 24
         targetSdk 35
         versionCode 3
         versionName '3.0'
+        buildConfigField "String", "GEMINI_API_KEY", "\"${escapedGeminiApiKey}\""
     }
 
     compileOptions {
