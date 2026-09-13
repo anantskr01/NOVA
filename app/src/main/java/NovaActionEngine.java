@@ -28,6 +28,12 @@ public final class NovaActionEngine {
     public boolean execute(String type, String value) {
         String action = type == null ? "none" : type.trim().toLowerCase();
         try {
+            String permissionError = NovaPermissionPolicy.check(action);
+            if (!permissionError.isEmpty()) {
+                if (callback != null) callback.status("ACTION BLOCKED • " + permissionError);
+                return false;
+            }
+
             JSONObject request = new JSONObject()
                     .put("type", action)
                     .put("value", value == null ? "" : value);
@@ -53,14 +59,10 @@ public final class NovaActionEngine {
                     catch (NumberFormatException ignored) { delay = 500L; }
                     SystemClock.sleep(Math.max(100L, Math.min(delay, 2500L)));
                     return true;
-                case "type_text":
-                    return typeText(value);
-                case "press_enter":
-                    return pressEnter();
-                case "search":
-                    return openWebUrl("https://www.google.com/search?q=" + Uri.encode(value.trim()));
-                case "open_url":
-                    return openWebUrl(value);
+                case "type_text": return typeText(value);
+                case "press_enter": return pressEnter();
+                case "search": return openWebUrl("https://www.google.com/search?q=" + Uri.encode(value.trim()));
+                case "open_url": return openWebUrl(value);
                 case "open_package":
                     Intent pkg = context.getPackageManager().getLaunchIntentForPackage(value.trim());
                     if (pkg == null) return false;
@@ -75,8 +77,7 @@ public final class NovaActionEngine {
                 case "settings":
                     launch(new Intent(Settings.ACTION_SETTINGS));
                     return true;
-                case "none":
-                    return true;
+                case "none": return true;
                 default:
                     if (callback != null) callback.status("ACTION BLOCKED • unknown_action:" + action);
                     return false;
