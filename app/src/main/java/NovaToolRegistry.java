@@ -23,13 +23,13 @@ public final class NovaToolRegistry {
         add("open_url", "Open an HTTP/HTTPS URL", true);
         add("open_package", "Launch an installed package", true);
         add("open_app", "Launch an installed app by name", true);
-        add("click_text", "Activate the best visible UI element matching the supplied text or accessibility description; prefer this for semantic targeting", true);
-        add("click_index", "Activate a numbered visible UI item only when the current observed UI clearly provides a reliable index", true);
+        add("click_text", "Activate the best visible UI element matching supplied text or accessibility description", true);
+        add("click_index", "Activate a numbered visible UI item when the observed UI provides a reliable index", true);
         add("type_text", "Replace the focused or best visible editable field with text", true);
-        add("press_enter", "Submit the focused editable field using the IME action or a visible submit control", true);
+        add("press_enter", "Submit the focused editable field", true);
         add("search", "Open a web search", true);
         add("read_screen", "Read visible screen text", true);
-        add("screen_observe", "Observe the current Android UI tree, including labels, accessibility descriptions, state, and screen bounds", true);
+        add("screen_observe", "Observe the current Android UI tree", true);
         add("web_search", "Search the public web and return structured results", true);
         add("web_fetch", "Fetch a public page and return bounded text", true);
         add("web_research", "Start a bounded public-web research pass", true);
@@ -37,7 +37,7 @@ public final class NovaToolRegistry {
         add("remember", "Save a durable fact explicitly provided by the user", true);
         add("parallel", "Run independent informational tools concurrently", true);
         add("settings", "Open Android settings", true);
-        add("wait", "Wait for a bounded duration without changing the UI goal", true);
+        add("wait", "Wait for a bounded duration", true);
         add("none", "Do nothing", true);
     }
 
@@ -62,13 +62,17 @@ public final class NovaToolRegistry {
         return Collections.unmodifiableList(new ArrayList<>(tools.values()));
     }
 
+    /** Planner-facing capability manifest: schema + risk + reversibility, not just descriptions. */
     public synchronized String promptSummary() {
         StringBuilder out = new StringBuilder();
         for (NovaTool t : tools.values()) {
-            if (out.length() > 7000) break;
+            if (out.length() > 10000) break;
             out.append("- ").append(t.type())
                     .append(": ").append(t.description())
+                    .append("; schema=").append(t.parameterSchema())
+                    .append("; risk=").append(t.risk())
                     .append("; reversible=").append(t.reversible())
+                    .append("; parallel=").append(t.supportsParallel())
                     .append('\n');
         }
         return out.toString().trim();
