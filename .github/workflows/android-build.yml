@@ -3,7 +3,9 @@ name: NOVA Android Build
 on:
   push:
     branches:
-      - feature/nova-agent-core-v1
+      - main
+      - nova-v1-foundation-2026-09-14
+      - feature/**
   pull_request:
     branches:
       - main
@@ -22,4 +24,4 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x gradlew
       - name: Assemble debug APK
-        run: ./gradlew --no-daemon assembleDebug
+        run: ./gradlew --no-daemon clean assembleDebug
