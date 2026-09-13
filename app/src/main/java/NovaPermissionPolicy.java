@@ -22,6 +22,7 @@ public final class NovaPermissionPolicy {
             case "web_research":
             case "none":
             case "wait":
+            case "parallel":
                 return Risk.LOW;
             case "open_url":
             case "search":
@@ -29,6 +30,8 @@ public final class NovaPermissionPolicy {
             case "open_package":
             case "type_text":
             case "press_enter":
+            case "click_text":
+            case "click_index":
             case "home":
             case "back":
             case "recents":
