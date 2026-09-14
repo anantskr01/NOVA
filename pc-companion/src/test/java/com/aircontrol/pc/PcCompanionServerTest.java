@@ -9,7 +9,6 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.UUID;
@@ -31,6 +30,9 @@ class PcCompanionServerTest {
 
     @BeforeEach void startServer() throws Exception {
         Files.writeString(workspace.resolve("Sample.java"), "class Sample {\n  void hello() {}\n}\n");
+        Files.writeString(workspace.resolve("build.gradle"), "plugins { id 'java' }\n");
+        Files.createDirectories(workspace.resolve("src/main"));
+        Files.createDirectories(workspace.resolve("src/test"));
         server = new PcCompanionServer(SECRET, workspace);
         port = server.start("127.0.0.1", 0);
     }
@@ -50,6 +52,21 @@ class PcCompanionServerTest {
         HttpResponse<String> r = get("/v1/observe", true, null);
         assertEquals(200, r.statusCode());
         assertTrue(new JSONObject(r.body()).getBoolean("ok"));
+    }
+
+    @Test void projectDiscoveryFindsBuildLanguageSourcesTestsAndGitMetadata() throws Exception {
+        String body = new JSONObject().put("id", "discover").put("tool", "pc_project_discover")
+                .put("args", new JSONObject()).toString();
+        HttpResponse<String> r = post(body);
+        assertEquals(200, r.statusCode());
+        JSONObject result = new JSONObject(r.body());
+        assertTrue(result.getBoolean("verified"));
+        assertEquals("gradle", result.getString("projectType"));
+        assertTrue(result.getJSONArray("languages").toString().contains("Java/Kotlin/Gradle-compatible"));
+        assertTrue(result.getJSONArray("sourceDirs").toString().contains("src/main"));
+        assertTrue(result.getJSONArray("testDirs").toString().contains("src/test"));
+        assertTrue(result.getJSONArray("buildCommands").length() >= 1);
+        assertTrue(result.has("git"));
     }
 
     @Test void badSignatureIsRejected() throws Exception {
@@ -134,11 +151,8 @@ class PcCompanionServerTest {
     @Test void symlinkEscapeIsRejectedWhenSupported() throws Exception {
         Path outside = Files.createTempDirectory("nova-outside");
         Path link = workspace.resolve("escape");
-        try {
-            Files.createSymbolicLink(link, outside);
-        } catch (UnsupportedOperationException | java.nio.file.FileSystemException | SecurityException e) {
-            return;
-        }
+        try { Files.createSymbolicLink(link, outside); }
+        catch (UnsupportedOperationException | java.nio.file.FileSystemException | SecurityException e) { return; }
         String body = new JSONObject().put("id", "t-symlink").put("tool", "pc_read_file")
                 .put("args", new JSONObject().put("path", "escape/secret.txt")).toString();
         HttpResponse<String> r = post(body);
