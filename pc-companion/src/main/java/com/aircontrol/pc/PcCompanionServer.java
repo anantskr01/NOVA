@@ -112,6 +112,10 @@ public final class PcCompanionServer {
 
     private JSONObject executeTool(String tool, JSONObject args) throws Exception {
         return switch (tool) {
+            case "pc_observe" -> new JSONObject().put("ok", true).put("os", System.getProperty("os.name", "unknown"))
+                    .put("arch", System.getProperty("os.arch", "unknown")).put("java", System.getProperty("java.version", "unknown"))
+                    .put("workspace", workspace.toString()).put("workspaceReal", realWorkspace.toString()).put("verified", true);
+            case "pc_project_discover" -> projectDiscover(args);
             case "pc_list_dir" -> listDir(args);
             case "pc_search_text" -> searchText(args);
             case "pc_read_file" -> readFile(args);
@@ -123,6 +127,49 @@ public final class PcCompanionServer {
             default -> error("tool_not_allowed");
         };
     }
+
+    private JSONObject projectDiscover(JSONObject args) throws Exception {
+        Path root = resolveWorkspacePath(args.optString("path", ""));
+        if (!Files.isDirectory(root)) return error("not_a_directory");
+        JSONArray markers = new JSONArray();
+        JSONArray languages = new JSONArray();
+        JSONArray sourceDirs = new JSONArray();
+        JSONArray testDirs = new JSONArray();
+        JSONArray buildCommands = new JSONArray();
+        JSONArray testCommands = new JSONArray();
+        addIfExists(root, "settings.gradle", markers);
+        addIfExists(root, "settings.gradle.kts", markers);
+        addIfExists(root, "build.gradle", markers);
+        addIfExists(root, "build.gradle.kts", markers);
+        addIfExists(root, "pom.xml", markers);
+        addIfExists(root, "package.json", markers);
+        addIfExists(root, "pyproject.toml", markers);
+        addIfExists(root, "requirements.txt", markers);
+        addIfExists(root, "Cargo.toml", markers);
+        addIfExists(root, "go.mod", markers);
+        boolean gradle = Files.exists(root.resolve("gradlew")) || Files.exists(root.resolve("gradlew.bat")) || Files.exists(root.resolve("build.gradle")) || Files.exists(root.resolve("build.gradle.kts"));
+        boolean maven = Files.exists(root.resolve("pom.xml")) || Files.exists(root.resolve("mvnw"));
+        boolean node = Files.exists(root.resolve("package.json"));
+        boolean python = Files.exists(root.resolve("pyproject.toml")) || Files.exists(root.resolve("requirements.txt"));
+        if (gradle) { languages.put("Java/Kotlin/Gradle-compatible"); buildCommands.put(Files.exists(root.resolve("gradlew.bat")) ? "gradlew.bat build" : "./gradlew build"); testCommands.put(Files.exists(root.resolve("gradlew.bat")) ? "gradlew.bat test" : "./gradlew test"); }
+        if (maven) { languages.put("Java/Maven"); buildCommands.put(Files.exists(root.resolve("mvnw")) ? "./mvnw test" : "mvn test"); testCommands.put(Files.exists(root.resolve("mvnw")) ? "./mvnw test" : "mvn test"); }
+        if (node) { languages.put("JavaScript/Node.js"); buildCommands.put("npm test"); testCommands.put("npm test"); }
+        if (python) { languages.put("Python"); testCommands.put("python -m pytest"); }
+        if (Files.isDirectory(root.resolve("src"))) sourceDirs.put("src");
+        for (String name : new String[]{"app/src/main", "src/main", "lib", "source"}) if (Files.isDirectory(root.resolve(name))) sourceDirs.put(name);
+        for (String name : new String[]{"app/src/test", "src/test", "tests", "test"}) if (Files.isDirectory(root.resolve(name))) testDirs.put(name);
+        String projectType = gradle ? "gradle" : maven ? "maven" : node ? "node" : python ? "python" : Files.exists(root.resolve("Cargo.toml")) ? "rust" : Files.exists(root.resolve("go.mod")) ? "go" : "unknown";
+        JSONObject git = new JSONObject().put("present", Files.exists(root.resolve(".git")) || Files.isDirectory(root.resolve(".git")));
+        if (git.getBoolean("present")) {
+            JSONObject status = runCommand(new String[]{"git", "status", "--short", "--branch"}, new JSONObject().put("path", root.equals(workspace) ? "" : workspace.relativize(root).toString()).put("timeoutMs", 10000));
+            git.put("statusOk", status.optBoolean("ok", false)).put("status", status.optString("stdout", "")).put("statusVerified", status.optBoolean("verified", false));
+        }
+        return new JSONObject().put("ok", true).put("verified", true).put("projectRoot", workspace.relativize(root).toString().replace('\\', '/'))
+                .put("projectType", projectType).put("languages", languages).put("markers", markers).put("sourceDirs", sourceDirs).put("testDirs", testDirs)
+                .put("buildCommands", buildCommands).put("testCommands", testCommands).put("git", git);
+    }
+
+    private void addIfExists(Path root, String name, JSONArray out) { if (Files.exists(root.resolve(name))) out.put(name); }
 
     private JSONObject listDir(JSONObject args) throws IOException {
         Path dir = resolveWorkspacePath(args.optString("path", ""));
