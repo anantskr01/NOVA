@@ -16,7 +16,7 @@ public final class NovaActionSchema {
             "open_url", "open_package", "open_app", "click_text", "click_index",
             "type_text", "press_enter", "search", "read_screen", "screen_observe",
             "web_search", "web_fetch", "web_research", "memory_search", "remember",
-            "parallel", "settings", "wait",
+            "parallel", "settings", "wait", "pc_observe",
             "pc_list_dir", "pc_read_file", "pc_write_file", "pc_git_status", "pc_git_diff",
             "pc_build", "pc_run", "none"
     )));
@@ -30,7 +30,7 @@ public final class NovaActionSchema {
 
     private static final Set<String> INFORMATIONAL = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
             "web_search", "web_fetch", "web_research", "screen_observe",
-            "read_screen", "memory_search", "remember",
+            "read_screen", "memory_search", "remember", "pc_observe",
             "pc_list_dir", "pc_read_file", "pc_git_status", "pc_git_diff"
     )));
 
@@ -76,6 +76,11 @@ public final class NovaActionSchema {
             String lower = value.toLowerCase();
             if (!(lower.startsWith("http://") || lower.startsWith("https://"))) return "invalid_url_scheme";
         }
+        if (type.startsWith("pc_") && !isInformational(type)) {
+            if (!("pc_write_file".equals(type) || "pc_build".equals(type) || "pc_run".equals(type))) {
+                return "unsupported_pc_tool:" + type;
+            }
+        }
         return "";
     }
 
@@ -86,7 +91,6 @@ public final class NovaActionSchema {
             case "search": case "web_search": case "web_fetch":
             case "web_research": case "memory_search": case "remember":
             case "parallel": case "wait":
-                return true;
             case "pc_read_file": case "pc_write_file": case "pc_build": case "pc_run":
                 return true;
             default:
