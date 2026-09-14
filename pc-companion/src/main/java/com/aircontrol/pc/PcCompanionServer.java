@@ -12,11 +12,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -44,15 +42,17 @@ public final class PcCompanionServer {
         Files.createDirectories(this.workspace);
     }
 
-    public void start(String bindHost, int port) throws IOException {
+    public int start(String bindHost, int port) throws IOException {
         server = HttpServer.create(new InetSocketAddress(bindHost, port), 0);
         server.createContext("/v1/health", this::health);
         server.createContext("/v1/execute", this::execute);
         server.createContext("/v1/observe", this::observe);
         server.setExecutor(Executors.newFixedThreadPool(4));
         server.start();
-        System.out.println("NOVA PC companion listening on " + bindHost + ":" + port);
+        int actualPort = server.getAddress().getPort();
+        System.out.println("NOVA PC companion listening on " + bindHost + ":" + actualPort);
         System.out.println("Workspace: " + workspace);
+        return actualPort;
     }
 
     public void stop() { if (server != null) server.stop(1); }
