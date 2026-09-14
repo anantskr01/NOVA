@@ -7,7 +7,6 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -30,28 +29,27 @@ public final class NovaPcHttpClient implements NovaPcAgent {
     @Override public boolean isConnected() { return connected; }
 
     @Override public NovaToolResult execute(NovaToolInput input) {
-        if (input == null) return NovaToolResult.failure("", "invalid_input", false);
+        if (input == null) return NovaToolResult.failure("", "invalid_input", "Invalid PC tool input", false);
         if (baseUrl.isEmpty() || secret.length() < 32) {
             connected = false;
-            return NovaToolResult.failure(input.toolType(), "pc_not_configured", false);
+            return NovaToolResult.failure(input.toolType, "pc_not_configured", "PC companion is not configured", false);
         }
         try {
             JSONObject request = new JSONObject()
                     .put("id", UUID.randomUUID().toString())
-                    .put("tool", input.toolType())
-                    .put("args", input.arguments());
+                    .put("tool", input.toolType)
+                    .put("args", input.arguments);
             JSONObject response = request("/v1/execute", "POST", request.toString());
             boolean ok = response.optBoolean("ok", false);
             connected = true;
             if (ok) {
-                return new NovaToolResult(true, input.toolType(), response.toString(), "", false,
-                        response.optBoolean("verified", false));
+                return NovaToolResult.success(input.toolType, response.toString(), response.optBoolean("verified", false));
             }
-            return new NovaToolResult(false, input.toolType(), response.optString("error", "pc_tool_failed"),
-                    response.optString("error", "pc_tool_failed"), response.optBoolean("retryable", false), false);
+            String error = response.optString("error", "pc_tool_failed");
+            return NovaToolResult.failure(input.toolType, error, response.toString(), response.optBoolean("retryable", false));
         } catch (Exception e) {
             connected = false;
-            return NovaToolResult.failure(input.toolType(), compactError(e), true);
+            return NovaToolResult.failure(input.toolType, "pc_request_failed", compactError(e), true);
         }
     }
 
