@@ -38,6 +38,13 @@ public final class NovaToolRegistry {
         add("parallel", "Run independent informational tools concurrently", true);
         add("settings", "Open Android settings", true);
         add("wait", "Wait for a bounded duration", true);
+        add("pc_list_dir", "List files/directories inside the authenticated PC workspace", true);
+        add("pc_read_file", "Read a bounded file inside the authenticated PC workspace", true);
+        add("pc_write_file", "Write and verify a file inside the authenticated PC workspace", true);
+        add("pc_git_status", "Inspect Git status in the authenticated PC workspace", true);
+        add("pc_git_diff", "Inspect the current Git diff in the authenticated PC workspace", true);
+        add("pc_build", "Run an allow-listed build tool in the authenticated PC workspace", false);
+        add("pc_run", "Run an allow-listed development command in the authenticated PC workspace", false);
         add("none", "Do nothing", true);
     }
 
