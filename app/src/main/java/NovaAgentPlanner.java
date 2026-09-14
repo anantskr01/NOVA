@@ -69,9 +69,15 @@ public final class NovaAgentPlanner {
             String say = plan.optString("say", "").trim();
             JSONArray actions = plan.optJSONArray("actions");
             if (actions == null || actions.length() == 0) {
-                if (codingState != null && !codingState.isTerminal()) codingState.complete();
-                if (!say.isEmpty()) listener.reply(say);
-                return result(true, true, 0, "", screen(), say, "");
+                if (codingState != null && !codingState.isTerminal()) {
+                    if (codingState.canComplete()) codingState.complete();
+                    else {
+                        listener.status("AGENT • CODING COMPLETION BLOCKED • MISSING VERIFIED BUILD/TEST EVIDENCE");
+                        return result(true, false, 1, "coding_completion_evidence_missing", screen(), "", "");
+                    }
+                }
+                if (!say.isEmpty() && (codingState == null || codingState.isTerminal())) listener.reply(say);
+                return result(true, codingState == null || codingState.isTerminal(), 0, "", screen(), say, "");
             }
             if (actions.length() > NovaAgentPolicy.MAX_STEPS) {
                 listener.status("AGENT • PLAN REJECTED • STEP LIMIT");
@@ -89,7 +95,7 @@ public final class NovaAgentPlanner {
             String previousPackage = safePackage();
 
             for (int i = 0; i < actions.length(); i++) {
-                if (NovaAgentPolicy.taskExpired(started)) { failures.add("task_timeout"); listener.status("AGENT • SAFE STOP • TASK TIMEOUT"); if (codingState != null) codingState.fail("task_timeout"); break; }
+                if (NovaAgentPolicy.taskExpired(started, codingPlan)) { failures.add("task_timeout"); listener.status("AGENT • SAFE STOP • TASK TIMEOUT"); if (codingState != null) codingState.fail("task_timeout"); break; }
                 JSONObject action = actions.optJSONObject(i);
                 if (action == null) { failures.add("malformed_step_" + (i + 1)); listener.status("AGENT • BLOCKED INVALID ACTION"); if (codingState != null) codingState.fail("malformed_action"); break; }
                 String type = action.optString("type", "").trim().toLowerCase();
@@ -158,11 +164,9 @@ public final class NovaAgentPlanner {
             String finalScreen = screen();
             if (!failures.isEmpty()) listener.status("AGENT • RECOVERY REQUIRED • " + failures.get(0));
             else listener.status("AGENT • TASK VERIFIED");
-            if (codingState != null && codingPlan) {
-                if (failures.isEmpty()) codingState.complete(); else codingState.fail(failures.get(0));
-            }
-            if (failures.isEmpty() && outputs.length() == 0 && !say.isEmpty()) listener.reply(say);
-            return result(true, failures.isEmpty(), failures.size(), failures.isEmpty() ? "" : failures.get(0), finalScreen, say, outputs.toString());
+            if (codingState != null && codingPlan && failures.isEmpty() && codingState.canComplete()) codingState.complete();
+            if (failures.isEmpty() && outputs.length() == 0 && !say.isEmpty() && (codingState == null || codingState.isTerminal())) listener.reply(say);
+            return result(true, failures.isEmpty() && (codingState == null || codingState.isTerminal()), failures.size(), failures.isEmpty() ? "" : failures.get(0), finalScreen, say, outputs.toString());
         } catch (Exception e) {
             Log.e(TAG, "PLAN EXECUTION ERROR", e); listener.status("AGENT • SAFE STOP");
             if (codingState != null) codingState.fail("planner_exception");
