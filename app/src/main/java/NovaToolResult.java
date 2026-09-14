@@ -29,7 +29,7 @@ public final class NovaToolResult {
         return new NovaToolResult(false, toolType, message, errorCode, retryable, false);
     }
 
-    public JSONObject toJson() {
+    public JSONObject toJsonObject() {
         JSONObject out = new JSONObject();
         try {
             out.put("ok", success);
@@ -45,8 +45,13 @@ public final class NovaToolResult {
         return out;
     }
 
+    /** JSON wire representation used by planner/executor boundaries. */
+    public String toJson() {
+        return toJsonObject().toString();
+    }
+
     @Override
     public String toString() {
-        return toJson().toString();
+        return toJson();
     }
 }
