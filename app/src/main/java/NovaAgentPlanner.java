@@ -44,6 +44,7 @@ public final class NovaAgentPlanner {
     private final ActionExecutor executor;
     private final Listener listener;
     private final NovaToolRegistry tools;
+    private NovaCodingTaskState codingState;
 
     public NovaAgentPlanner(ActionExecutor e, Listener l) { this(e, l, new NovaToolRegistry()); }
     public NovaAgentPlanner(ActionExecutor e, Listener l, NovaToolRegistry t) {
@@ -51,6 +52,10 @@ public final class NovaAgentPlanner {
     }
 
     public boolean execute(String rawPlan) { return executeDetailed(rawPlan).completed; }
+
+    public synchronized JSONObject codingStateSnapshot() {
+        return codingState == null ? new JSONObject().put("phase", "IDLE") : codingState.snapshot();
+    }
 
     public ExecutionResult executeDetailed(String rawPlan) {
         long started = System.currentTimeMillis();
@@ -68,6 +73,10 @@ public final class NovaAgentPlanner {
                 return result(false, false, 1, "step_limit_exceeded", screen(), "", "");
             }
 
+            final boolean codingPlan = containsPcTool(actions);
+            if (codingPlan && (codingState == null || codingState.isTerminal())) codingState = new NovaCodingTaskState();
+            if (codingPlan) codingState.turn();
+
             listener.status("AGENT • OBSERVE → ACT → VERIFY");
             List<String> failures = new ArrayList<>();
             JSONArray outputs = new JSONArray();
@@ -75,14 +84,14 @@ public final class NovaAgentPlanner {
             String previousPackage = safePackage();
 
             for (int i = 0; i < actions.length(); i++) {
-                if (NovaAgentPolicy.taskExpired(started)) { failures.add("task_timeout"); listener.status("AGENT • SAFE STOP • TASK TIMEOUT"); break; }
+                if (NovaAgentPolicy.taskExpired(started)) { failures.add("task_timeout"); listener.status("AGENT • SAFE STOP • TASK TIMEOUT"); if (codingState != null) codingState.fail("task_timeout"); break; }
                 JSONObject action = actions.optJSONObject(i);
-                if (action == null) { failures.add("malformed_step_" + (i + 1)); listener.status("AGENT • BLOCKED INVALID ACTION"); break; }
+                if (action == null) { failures.add("malformed_step_" + (i + 1)); listener.status("AGENT • BLOCKED INVALID ACTION"); if (codingState != null) codingState.fail("malformed_action"); break; }
                 String type = action.optString("type", "").trim().toLowerCase();
                 String validation = NovaActionSchema.validate(action);
                 if (!tools.contains(type) || !NovaActionSchema.isKnown(type) || !validation.isEmpty()) {
                     String reason = validation.isEmpty() ? "unknown_action:" + type : validation;
-                    listener.status("AGENT • BLOCKED INVALID ACTION • " + reason); failures.add(reason); break;
+                    listener.status("AGENT • BLOCKED INVALID ACTION • " + reason); failures.add(reason); if (codingState != null) codingState.fail(reason); break;
                 }
                 String value = NovaAgentPolicy.bounded(action.optString("value", "").trim(), 2048);
                 if ("none".equals(type)) continue;
@@ -99,14 +108,17 @@ public final class NovaAgentPlanner {
                 }
                 if (!ok) {
                     addResult(outputs, i, type, value, output, before, "", false, beforePackage, safePackage());
-                    failures.add(type); listener.status("AGENT • RECOVERY NEEDED • " + type); break;
+                    failures.add(type); listener.status("AGENT • RECOVERY NEEDED • " + type);
+                    if (codingState != null && isPcTool(type)) { codingState.observeTool(type, value, output, false); codingState.recover(); }
+                    break;
                 }
 
                 if (isPcTool(type)) {
                     boolean verified = verifiedFromToolResult(output);
                     String after = output;
+                    if (codingState != null) codingState.observeTool(type, value, output, verified);
                     addResult(outputs, i, type, value, output, before, after, verified, beforePackage, safePackage());
-                    if (!verified) { failures.add(type + "_verification"); listener.status("AGENT • RECOVERY • PC RESULT NOT VERIFIED"); break; }
+                    if (!verified) { failures.add(type + "_verification"); listener.status("AGENT • RECOVERY • PC RESULT NOT VERIFIED"); if (codingState != null) codingState.recover(); break; }
                     listener.status("AGENT • VERIFY • PASS • " + type);
                     return result(true, false, 0, "", screen(), "", outputs.toString());
                 }
@@ -141,12 +153,24 @@ public final class NovaAgentPlanner {
             String finalScreen = screen();
             if (!failures.isEmpty()) listener.status("AGENT • RECOVERY REQUIRED • " + failures.get(0));
             else listener.status("AGENT • TASK VERIFIED");
+            if (codingState != null && codingPlan) {
+                if (failures.isEmpty()) codingState.complete(); else codingState.fail(failures.get(0));
+            }
             if (failures.isEmpty() && outputs.length() == 0 && !say.isEmpty()) listener.reply(say);
             return result(true, failures.isEmpty(), failures.size(), failures.isEmpty() ? "" : failures.get(0), finalScreen, say, outputs.toString());
         } catch (Exception e) {
             Log.e(TAG, "PLAN EXECUTION ERROR", e); listener.status("AGENT • SAFE STOP");
+            if (codingState != null) codingState.fail("planner_exception");
             return result(false, false, 1, "planner_exception", "", "", "");
         }
+    }
+
+    private boolean containsPcTool(JSONArray actions) {
+        for (int i = 0; i < actions.length(); i++) {
+            JSONObject action = actions.optJSONObject(i);
+            if (action != null && isPcTool(action.optString("type", "").trim().toLowerCase())) return true;
+        }
+        return false;
     }
 
     private ExecutionResult result(boolean valid, boolean complete, int failed, String action, String screen, String say, String tools) {
@@ -185,13 +209,15 @@ public final class NovaAgentPlanner {
 
     private void addResult(JSONArray array, int index, String type, String value, String output, String before, String after,
                            boolean verified, String beforePackage, String afterPackage) throws Exception {
-        array.put(new JSONObject().put("step", index + 1).put("tool", type).put("value", value)
+        JSONObject result = new JSONObject().put("step", index + 1).put("tool", type).put("value", value)
                 .put("ok", outputOk(output)).put("verified", verified)
                 .put("beforePackage", beforePackage == null ? "" : beforePackage)
                 .put("afterPackage", afterPackage == null ? "" : afterPackage)
                 .put("before", NovaAgentPolicy.bounded(before == null ? "" : before, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))
                 .put("after", NovaAgentPolicy.bounded(after == null ? "" : after, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))
-                .put("result", NovaAgentPolicy.bounded(output == null ? "" : output, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)));
+                .put("result", NovaAgentPolicy.bounded(output == null ? "" : output, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));
+        if (codingState != null) result.put("codingState", codingState.snapshot());
+        array.put(result);
     }
 
     private boolean shouldRetry(String type) {
