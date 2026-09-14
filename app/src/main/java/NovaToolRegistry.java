@@ -39,6 +39,7 @@ public final class NovaToolRegistry {
         add("settings", "Open Android settings", true);
         add("wait", "Wait for a bounded duration", true);
         add("pc_observe", "Observe the authenticated PC companion state", true);
+        add("pc_project_discover", "Discover project type, build/test files, source/test directories and Git state in the authenticated PC workspace", true);
         add("pc_list_dir", "List files/directories inside the authenticated PC workspace", true);
         add("pc_search_text", "Search source files in the authenticated PC workspace for a literal text pattern", true);
         add("pc_read_file", "Read a bounded file inside the authenticated PC workspace", true);
@@ -84,7 +85,7 @@ public final class NovaToolRegistry {
                     .append("; parallel=").append(t.supportsParallel())
                     .append('\n');
         }
-        out.append("\nCODING AGENT RULES: For coding requests, behave as an engineering agent, not a chat assistant. Follow INSPECT -> PLAN -> MODIFY -> BUILD -> DIAGNOSE -> FIX -> REBUILD -> VERIFY. First inspect the workspace and search for relevant symbols/files before editing. Read the smallest relevant files needed to understand the code. Before every mutation, produce a concrete intended change; pc_write_file is confirmation-gated. After every write, inspect Git diff and build. Treat non-zero build/test output as evidence to diagnose, never as success. Read compiler/runtime errors, identify the root cause, make the smallest corrective edit, rebuild, and repeat. Do not claim a coding task is complete until the final build/test result is successful and the Git diff matches the requested change. Never overwrite unrelated work. Prefer targeted source edits and preserve existing behavior outside the requested change.\n");
+        out.append("\nCODING AGENT RULES: For coding requests, behave as an engineering agent, not a chat assistant. Follow INSPECT -> PLAN -> MODIFY -> BUILD -> DIAGNOSE -> FIX -> REBUILD -> VERIFY. First inspect the workspace and search for relevant symbols/files before editing. Read the smallest relevant files needed to understand the code. Before every mutation, produce a concrete intended change; pc_write_file is confirmation-gated. After every write, inspect Git diff and build. Treat non-zero build/test output as evidence to diagnose, never as success. Read compiler/runtime errors, identify the root cause, make the smallest corrective edit, rebuild, and repeat. Do not claim a coding task is complete until the final build/test result is successful and the Git diff matches the requested change. Never overwrite unrelated work. Prefer targeted source edits and preserve existing behavior outside the requested change. Use pc_project_discover first when the project root/build system/test commands are not already known.\n");
         return out.toString().trim();
     }
 
