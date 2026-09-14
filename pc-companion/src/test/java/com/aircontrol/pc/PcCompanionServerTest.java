@@ -88,12 +88,15 @@ class PcCompanionServerTest {
         assertTrue(new JSONObject(read.body()).getBoolean("verified"));
     }
 
-    @Test void pathTraversalIsRejected() throws Exception {
+    @Test void pathTraversalIsRejectedWithStructuredClientError() throws Exception {
         String body = new JSONObject().put("id", "t3").put("tool", "pc_read_file")
                 .put("args", new JSONObject().put("path", "../outside.txt")).toString();
         HttpResponse<String> r = post(body);
-        assertEquals(500, r.statusCode());
-        assertEquals("internal_error", new JSONObject(r.body()).getString("error"));
+        assertEquals(403, r.statusCode());
+        JSONObject result = new JSONObject(r.body());
+        assertFalse(result.getBoolean("ok"));
+        assertFalse(result.getBoolean("verified"));
+        assertEquals("path_outside_workspace", result.getString("error"));
     }
 
     @Test void searchReturnsSourceLocation() throws Exception {
