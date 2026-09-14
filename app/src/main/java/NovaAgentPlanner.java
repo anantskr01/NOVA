@@ -22,15 +22,9 @@ public final class NovaAgentPlanner {
         public final String finalScreen;
         public final String say;
         public final String toolResults;
-
         ExecutionResult(boolean v, boolean c, int f, String a, String s, String y, String t) {
-            planValid = v;
-            completed = c;
-            failedSteps = f;
-            failedAction = a == null ? "" : a;
-            finalScreen = s == null ? "" : s;
-            say = y == null ? "" : y;
-            toolResults = t == null ? "" : t;
+            planValid = v; completed = c; failedSteps = f; failedAction = a == null ? "" : a;
+            finalScreen = s == null ? "" : s; say = y == null ? "" : y; toolResults = t == null ? "" : t;
         }
     }
 
@@ -41,46 +35,28 @@ public final class NovaAgentPlanner {
         boolean clickVisibleIndex(int index);
         default String readUiState() { return readScreen(); }
         default String activePackageName() { return ""; }
-        default String executeTool(String type, String value) {
-            return execute(type, value) ? "{\"ok\":true}" : "{\"ok\":false}";
-        }
-        default String executeParallel(String value) {
-            return "{\"ok\":false,\"error\":\"parallel_not_supported\"}";
-        }
+        default String executeTool(String type, String value) { return execute(type, value) ? "{\"ok\":true}" : "{\"ok\":false}"; }
+        default String executeParallel(String value) { return "{\"ok\":false,\"error\":\"parallel_not_supported\"}"; }
     }
 
-    public interface Listener {
-        void status(String text);
-        void reply(String text);
-    }
+    public interface Listener { void status(String text); void reply(String text); }
 
     private final ActionExecutor executor;
     private final Listener listener;
     private final NovaToolRegistry tools;
 
-    public NovaAgentPlanner(ActionExecutor e, Listener l) {
-        this(e, l, new NovaToolRegistry());
-    }
-
+    public NovaAgentPlanner(ActionExecutor e, Listener l) { this(e, l, new NovaToolRegistry()); }
     public NovaAgentPlanner(ActionExecutor e, Listener l, NovaToolRegistry t) {
-        executor = e;
-        listener = l;
-        tools = t == null ? new NovaToolRegistry() : t;
+        executor = e; listener = l; tools = t == null ? new NovaToolRegistry() : t;
     }
 
-    public boolean execute(String rawPlan) {
-        return executeDetailed(rawPlan).completed;
-    }
+    public boolean execute(String rawPlan) { return executeDetailed(rawPlan).completed; }
 
     public ExecutionResult executeDetailed(String rawPlan) {
         long started = System.currentTimeMillis();
         try {
             JSONObject plan = parseObject(rawPlan);
-            if (plan == null) {
-                listener.status("AGENT • INVALID PLAN");
-                return result(false, false, 1, "invalid_plan", "", "", "");
-            }
-
+            if (plan == null) { listener.status("AGENT • INVALID PLAN"); return result(false, false, 1, "invalid_plan", "", "", ""); }
             String say = plan.optString("say", "").trim();
             JSONArray actions = plan.optJSONArray("actions");
             if (actions == null || actions.length() == 0) {
@@ -92,119 +68,83 @@ public final class NovaAgentPlanner {
                 return result(false, false, 1, "step_limit_exceeded", screen(), "", "");
             }
 
-            listener.status("AGENT • OBSERVE → UNDERSTAND → ACT → VERIFY");
+            listener.status("AGENT • OBSERVE → ACT → VERIFY");
             List<String> failures = new ArrayList<>();
             JSONArray outputs = new JSONArray();
             String previous = screen();
             String previousPackage = safePackage();
 
             for (int i = 0; i < actions.length(); i++) {
-                if (NovaAgentPolicy.taskExpired(started)) {
-                    failures.add("task_timeout");
-                    listener.status("AGENT • SAFE STOP • TASK TIMEOUT");
-                    break;
-                }
-
+                if (NovaAgentPolicy.taskExpired(started)) { failures.add("task_timeout"); listener.status("AGENT • SAFE STOP • TASK TIMEOUT"); break; }
                 JSONObject action = actions.optJSONObject(i);
-                if (action == null) {
-                    failures.add("malformed_step_" + (i + 1));
-                    listener.status("AGENT • BLOCKED INVALID ACTION • malformed_step_" + (i + 1));
-                    break;
-                }
-
+                if (action == null) { failures.add("malformed_step_" + (i + 1)); listener.status("AGENT • BLOCKED INVALID ACTION"); break; }
                 String type = action.optString("type", "").trim().toLowerCase();
                 String validation = NovaActionSchema.validate(action);
                 if (!tools.contains(type) || !NovaActionSchema.isKnown(type) || !validation.isEmpty()) {
                     String reason = validation.isEmpty() ? "unknown_action:" + type : validation;
-                    listener.status("AGENT • BLOCKED INVALID ACTION • " + reason);
-                    failures.add(reason);
-                    break;
+                    listener.status("AGENT • BLOCKED INVALID ACTION • " + reason); failures.add(reason); break;
                 }
-
                 String value = NovaAgentPolicy.bounded(action.optString("value", "").trim(), 2048);
                 if ("none".equals(type)) continue;
 
                 String before = screen();
                 String beforePackage = safePackage();
-                listener.status("AGENT • STEP " + (i + 1) + "/" + actions.length() + " • OBSERVE");
                 listener.status("AGENT • STEP " + (i + 1) + "/" + actions.length() + " • ACT • " + type);
-
                 String output = executeOne(type, value);
                 boolean ok = outputOk(output);
                 if (!ok && shouldRetry(type)) {
                     SystemClock.sleep(RETRY_DELAY_MS);
                     listener.status("AGENT • RETRY • " + type);
-                    output = executeOne(type, value);
-                    ok = outputOk(output);
+                    output = executeOne(type, value); ok = outputOk(output);
                 }
-
                 if (!ok) {
                     addResult(outputs, i, type, value, output, before, "", false, beforePackage, safePackage());
-                    failures.add(type);
-                    listener.status("AGENT • RECOVERY NEEDED • " + type);
-                    break;
+                    failures.add(type); listener.status("AGENT • RECOVERY NEEDED • " + type); break;
+                }
+
+                if (isPcTool(type)) {
+                    boolean verified = verifiedFromToolResult(output);
+                    String after = output;
+                    addResult(outputs, i, type, value, output, before, after, verified, beforePackage, safePackage());
+                    if (!verified) { failures.add(type + "_verification"); listener.status("AGENT • RECOVERY • PC RESULT NOT VERIFIED"); break; }
+                    listener.status("AGENT • VERIFY • PASS • " + type);
+                    return result(true, false, 0, "", screen(), "", outputs.toString());
                 }
 
                 if (isInformational(type) || "parallel".equals(type)) {
                     addResult(outputs, i, type, value, output, before, before, true, beforePackage, beforePackage);
                     continue;
                 }
-
                 if ("wait".equals(type)) {
                     addResult(outputs, i, type, value, output, before, screen(), true, beforePackage, safePackage());
-                    previous = screen();
-                    previousPackage = safePackage();
-                    continue;
+                    previous = screen(); previousPackage = safePackage(); continue;
                 }
 
                 String after = screen();
                 String afterPackage = safePackage();
-                boolean verified = !needsVerification(type)
-                        || verificationPassed(type, value, before, after, beforePackage, afterPackage);
-
+                boolean verified = !needsVerification(type) || verificationPassed(type, value, before, after, beforePackage, afterPackage);
                 if (!verified) {
                     listener.status("AGENT • VERIFY • UNCERTAIN • " + type);
                     SystemClock.sleep(VERIFY_DELAY_MS);
-                    String retry = screen();
-                    String retryPackage = safePackage();
+                    String retry = screen(); String retryPackage = safePackage();
                     verified = verificationPassed(type, value, before, retry, beforePackage, retryPackage);
-                    if (verified) {
-                        after = retry;
-                        afterPackage = retryPackage;
-                    }
+                    if (verified) { after = retry; afterPackage = retryPackage; }
                 }
-
                 addResult(outputs, i, type, value, output, before, after, verified, beforePackage, afterPackage);
-
-                if (!verified) {
-                    failures.add(type + "_verification");
-                    listener.status("AGENT • RECOVERY • STEP NOT CONFIRMED");
-                    break;
-                }
-
-                previous = after.isEmpty() ? previous : after;
-                previousPackage = afterPackage.isEmpty() ? previousPackage : afterPackage;
+                if (!verified) { failures.add(type + "_verification"); listener.status("AGENT • RECOVERY • STEP NOT CONFIRMED"); break; }
+                previous = after.isEmpty() ? previous : after; previousPackage = afterPackage.isEmpty() ? previousPackage : afterPackage;
                 listener.status("AGENT • VERIFY • PASS • " + type);
-
-                // Exactly one Android UI mutation per reasoning turn. NovaBrain receives the
-                // fresh observation and asks the model what should happen next.
                 listener.status("AGENT • STATE OBSERVED • NEXT REASONING TURN");
                 return result(true, false, 0, "", screen(), "", outputs.toString());
             }
 
             String finalScreen = screen();
-            if (!failures.isEmpty()) {
-                listener.status("AGENT • RECOVERY REQUIRED • " + failures.get(0));
-            } else {
-                listener.status("AGENT • TASK VERIFIED");
-            }
-            if (failures.isEmpty() && outputs.length() == 0 && !say.isEmpty()) {
-                listener.reply(say);
-            }
+            if (!failures.isEmpty()) listener.status("AGENT • RECOVERY REQUIRED • " + failures.get(0));
+            else listener.status("AGENT • TASK VERIFIED");
+            if (failures.isEmpty() && outputs.length() == 0 && !say.isEmpty()) listener.reply(say);
             return result(true, failures.isEmpty(), failures.size(), failures.isEmpty() ? "" : failures.get(0), finalScreen, say, outputs.toString());
         } catch (Exception e) {
-            Log.e(TAG, "PLAN EXECUTION ERROR", e);
-            listener.status("AGENT • SAFE STOP");
+            Log.e(TAG, "PLAN EXECUTION ERROR", e); listener.status("AGENT • SAFE STOP");
             return result(false, false, 1, "planner_exception", "", "", "");
         }
     }
@@ -215,53 +155,38 @@ public final class NovaAgentPlanner {
 
     private String executeOne(String type, String value) {
         try {
+            if (isPcTool(type)) return executor.executeTool(type, value);
             if (isInformational(type) || "read_screen".equals(type)) return executor.executeTool(type, value);
             if ("parallel".equals(type)) return executor.executeParallel(value);
             if ("click_text".equals(type)) return boolResult(executor.clickText(value));
             if ("click_index".equals(type)) {
-                try {
-                    return boolResult(executor.clickVisibleIndex(Integer.parseInt(value)));
-                } catch (NumberFormatException e) {
-                    return "{\"ok\":false,\"error\":\"invalid_index\"}";
-                }
+                try { return boolResult(executor.clickVisibleIndex(Integer.parseInt(value))); }
+                catch (NumberFormatException e) { return "{\"ok\":false,\"error\":\"invalid_index\"}"; }
             }
             if ("wait".equals(type)) {
-                long ms;
-                try { ms = Long.parseLong(value); } catch (NumberFormatException e) { ms = 500L; }
-                ms = Math.max(100L, Math.min(ms, 2500L));
-                SystemClock.sleep(ms);
+                long ms; try { ms = Long.parseLong(value); } catch (NumberFormatException e) { ms = 500L; }
+                ms = Math.max(100L, Math.min(ms, 2500L)); SystemClock.sleep(ms);
                 return "{\"ok\":true,\"waitMs\":" + ms + "}";
             }
             return boolResult(executor.execute(type, value));
-        } catch (Exception e) {
-            Log.e(TAG, "ACTION ERROR: " + type, e);
-            return "{\"ok\":false,\"error\":\"tool_exception\"}";
-        }
+        } catch (Exception e) { Log.e(TAG, "ACTION ERROR: " + type, e); return "{\"ok\":false,\"error\":\"tool_exception\"}"; }
     }
 
-    private boolean isInformational(String type) {
-        return NovaActionSchema.isInformational(type);
-    }
-
+    private boolean isPcTool(String type) { return type != null && type.startsWith("pc_"); }
+    private boolean isInformational(String type) { return NovaActionSchema.isInformational(type); }
     private boolean outputOk(String output) {
         if (output == null || output.trim().isEmpty()) return false;
-        try { return new JSONObject(output).optBoolean("ok", true); }
-        catch (Exception e) { return true; }
+        try { return new JSONObject(output).optBoolean("ok", true); } catch (Exception e) { return true; }
     }
-
-    private String boolResult(boolean ok) {
-        return "{\"ok\":" + ok + "}";
+    private boolean verifiedFromToolResult(String output) {
+        try { return new JSONObject(output).optBoolean("verified", false); } catch (Exception e) { return false; }
     }
+    private String boolResult(boolean ok) { return "{\"ok\":" + ok + "}"; }
 
-    private void addResult(JSONArray array, int index, String type, String value, String output,
-                           String before, String after, boolean verified,
-                           String beforePackage, String afterPackage) throws Exception {
-        array.put(new JSONObject()
-                .put("step", index + 1)
-                .put("tool", type)
-                .put("value", value)
-                .put("ok", outputOk(output))
-                .put("verified", verified)
+    private void addResult(JSONArray array, int index, String type, String value, String output, String before, String after,
+                           boolean verified, String beforePackage, String afterPackage) throws Exception {
+        array.put(new JSONObject().put("step", index + 1).put("tool", type).put("value", value)
+                .put("ok", outputOk(output)).put("verified", verified)
                 .put("beforePackage", beforePackage == null ? "" : beforePackage)
                 .put("afterPackage", afterPackage == null ? "" : afterPackage)
                 .put("before", NovaAgentPolicy.bounded(before == null ? "" : before, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS))
@@ -270,41 +195,26 @@ public final class NovaAgentPlanner {
     }
 
     private boolean shouldRetry(String type) {
-        return NovaAgentPolicy.MAX_RETRIES > 0 && (type.equals("click_text") || type.equals("click_index")
-                || type.equals("open_app") || type.equals("open_package") || type.equals("open_url")
-                || type.equals("search") || type.equals("type_text") || type.equals("press_enter")
-                || type.equals("web_search") || type.equals("web_fetch"));
+        return NovaAgentPolicy.MAX_RETRIES > 0 && (type.equals("click_text") || type.equals("click_index") || type.equals("open_app")
+                || type.equals("open_package") || type.equals("open_url") || type.equals("search") || type.equals("type_text")
+                || type.equals("press_enter") || type.equals("web_search") || type.equals("web_fetch"));
     }
 
     private boolean needsVerification(String type) {
-        return type.equals("open_app") || type.equals("open_package") || type.equals("open_url")
-                || type.equals("click_text") || type.equals("click_index") || type.equals("search")
-                || type.equals("type_text") || type.equals("press_enter")
+        return type.equals("open_app") || type.equals("open_package") || type.equals("open_url") || type.equals("click_text")
+                || type.equals("click_index") || type.equals("search") || type.equals("type_text") || type.equals("press_enter")
                 || type.startsWith("scroll_") || type.startsWith("swipe_");
     }
 
-    private boolean verificationPassed(String type, String value, String before, String after,
-                                       String beforePackage, String afterPackage) {
+    private boolean verificationPassed(String type, String value, String before, String after, String beforePackage, String afterPackage) {
         if (after == null || after.isEmpty()) return false;
-
-        if ("type_text".equals(type)) {
-            return true;
-        }
-
-        if (("open_app".equals(type) || "open_package".equals(type) || "open_url".equals(type))
-                && !afterPackage.isEmpty()
-                && !afterPackage.equals(beforePackage)) {
-            return true;
-        }
-
+        if ("type_text".equals(type)) return true;
+        if (("open_app".equals(type) || "open_package".equals(type) || "open_url".equals(type)) && !afterPackage.isEmpty() && !afterPackage.equals(beforePackage)) return true;
         if (before.isEmpty()) return true;
         if (!after.equals(before)) return true;
-
         if ("click_text".equals(type) && !value.isEmpty()) {
-            String a = after.toLowerCase();
-            return a.contains(value.toLowerCase()) && (a.contains("clickable=true") || a.contains("focusable=true"));
+            String a = after.toLowerCase(); return a.contains(value.toLowerCase()) && (a.contains("clickable=true") || a.contains("focusable=true"));
         }
-
         return false;
     }
 
@@ -312,25 +222,12 @@ public final class NovaAgentPlanner {
         String value = executor.readUiState();
         return value == null ? "" : NovaAgentPolicy.bounded(value.replaceAll("\\s+", " ").trim(), MAX_SCREEN_CHARS);
     }
-
-    private String safePackage() {
-        try {
-            String value = executor.activePackageName();
-            return value == null ? "" : value.trim();
-        } catch (Exception e) {
-            return "";
-        }
-    }
+    private String safePackage() { try { String value = executor.activePackageName(); return value == null ? "" : value.trim(); } catch (Exception e) { return ""; } }
 
     private JSONObject parseObject(String raw) throws Exception {
-        if (raw == null) return null;
-        String text = raw.trim();
-        if (text.startsWith("```")) {
-            text = text.replaceFirst("^```(?:json)?\\s*", "").replaceFirst("\\s*```$", "").trim();
-        }
-        int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
-        if (start < 0 || end <= start) return null;
-        return new JSONObject(text.substring(start, end + 1));
+        if (raw == null) return null; String text = raw.trim();
+        if (text.startsWith("```")) text = text.replaceFirst("^```(?:json)?\\s*", "").replaceFirst("\\s*```$", "").trim();
+        int start = text.indexOf('{'); int end = text.lastIndexOf('}');
+        if (start < 0 || end <= start) return null; return new JSONObject(text.substring(start, end + 1));
     }
 }
