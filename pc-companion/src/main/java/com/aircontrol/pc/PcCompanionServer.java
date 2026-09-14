@@ -246,8 +246,10 @@ public final class PcCompanionServer {
         } catch (Exception e) { throw new IllegalStateException(e); }
     }
 
-    private static byte[] sha256Bytes(byte[] data) throws Exception { return MessageDigest.getInstance("SHA-256").digest(data); }
-    private static String sha256(byte[] data) throws Exception { return Base64.getUrlEncoder().withoutPadding().encodeToString(sha256Bytes(data)); }
+    private static String sha256(byte[] data) throws Exception {
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(data);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
+    }
     private static JSONObject error(String code) { return new JSONObject().put("ok", false).put("error", code).put("verified", false); }
     private static void send(HttpExchange exchange, int code, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
