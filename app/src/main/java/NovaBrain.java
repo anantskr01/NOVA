@@ -20,7 +20,6 @@ public final class NovaBrain {
     private static final String PC_PREFS = "nova_pc_settings";
     private static final String PC_ENDPOINT = "endpoint";
     private static final int MAX_QUEUE = 6;
-    private static final int MAX_AGENT_TURNS = 8;
     private static final int MAX_RELEVANT_FACTS = 8;
 
     public interface Listener {
@@ -231,18 +230,25 @@ public final class NovaBrain {
         synchronized (this) {
             if (shutdown || token != generation) return;
         }
-        if (NovaAgentPolicy.taskExpired(goalStarted)) {
-            rememberAndReply("I stopped safely because the task exceeded NOVA's execution time limit.");
+        final boolean codingTask = NovaAgentPolicy.isCodingGoal(goal);
+        final int maxTurns = NovaAgentPolicy.maxAgentTurns(codingTask);
+        final int maxRecoveryAttempts = NovaAgentPolicy.maxRecoveryAttempts(codingTask);
+        if (NovaAgentPolicy.taskExpired(goalStarted, codingTask)) {
+            rememberAndReply(codingTask
+                    ? "I stopped safely because the coding task exceeded NOVA's execution time limit."
+                    : "I stopped safely because the task exceeded NOVA's execution time limit.");
             finishGoal(token); return;
         }
-        if (turn >= MAX_AGENT_TURNS) {
-            rememberAndReply("I stopped safely after reaching the agent reasoning limit.");
+        if (turn >= maxTurns) {
+            rememberAndReply(codingTask
+                    ? "I stopped safely after reaching the coding agent reasoning limit without verified completion."
+                    : "I stopped safely after reaching the agent reasoning limit.");
             finishGoal(token); return;
         }
         status(recoveryAttempt > 0 ? "BRAIN • RECOVERING → REPLANNING" : turn == 0 ? "BRAIN • UNDERSTANDING → PLANNING" : "BRAIN • OBSERVING → NEXT STEP");
         try {
             JSONArray messages = new JSONArray();
-            messages.put(new JSONObject().put("role", "system").put("content", buildSystemPrompt(recoveryAttempt > 0)));
+            messages.put(new JSONObject().put("role", "system").put("content", buildSystemPrompt(recoveryAttempt > 0, codingTask)));
             StringBuilder contextText = new StringBuilder("Relevant saved NOVA memory:\n")
                     .append(memory.searchFacts(goal, MAX_RELEVANT_FACTS))
                     .append("\n\nCurrent UI state:\n")
@@ -262,8 +268,8 @@ public final class NovaBrain {
                         NovaAgentPlanner.ExecutionResult r = planner.executeDetailed(text);
                         synchronized (NovaBrain.this) { if (shutdown || token != generation) return; }
                         if (!r.planValid) {
-                            if (recoveryAttempt < 1) main.post(() -> askAi(goal, recoveryAttempt + 1, "Invalid plan: " + r.failedAction, token, turn + 1, goalStarted));
-                            else { rememberAndReply("I couldn't produce a safe executable plan."); finishGoal(token); }
+                            if (recoveryAttempt < maxRecoveryAttempts) main.post(() -> askAi(goal, recoveryAttempt + 1, "Invalid plan: " + r.failedAction, token, turn + 1, goalStarted));
+                            else { rememberAndReply("I couldn't produce a safe executable plan after repeated recovery attempts."); finishGoal(token); }
                             return;
                         }
                         if (!r.toolResults.isEmpty()) {
@@ -277,11 +283,11 @@ public final class NovaBrain {
                             if (!r.say.isEmpty()) rememberAndReply(r.say);
                             finishGoal(token); return;
                         }
-                        if (recoveryAttempt < 1) {
+                        if (recoveryAttempt < maxRecoveryAttempts) {
                             String failure = "Failed action: " + r.failedAction + "\nObserved UI after failure:\n" + r.finalScreen;
                             main.post(() -> askAi(goal, recoveryAttempt + 1, failure, token, turn + 1, goalStarted));
                         } else {
-                            rememberAndReply(r.failedAction.isEmpty() ? "I couldn't complete that task safely." : "I couldn't complete the task safely at: " + r.failedAction + ".");
+                            rememberAndReply(r.failedAction.isEmpty() ? "I couldn't complete that task safely after repeated recovery attempts." : "I couldn't complete the task safely at: " + r.failedAction + " after repeated recovery attempts.");
                             finishGoal(token);
                         }
                     });
@@ -297,17 +303,24 @@ public final class NovaBrain {
         }
     }
 
-    private String buildSystemPrompt(boolean recovery) {
+    private String buildSystemPrompt(boolean recovery, boolean codingTask) {
         StringBuilder p = new StringBuilder();
         p.append("You are NOVA, a careful general-purpose Android + PC agent. Understand the user's goal, inspect the current state, choose the smallest correct next action, and return JSON only. ")
                 .append("Never claim success without evidence. A goal is NOT complete merely because an app or program was opened; every requested outcome must be observed and verified. ")
-                .append("Use at most ").append(NovaAgentPolicy.MAX_STEPS).append(" actions per reasoning turn and at most ").append(MAX_AGENT_TURNS).append(" reasoning turns per goal.\n");
+                .append("Use at most ").append(NovaAgentPolicy.MAX_STEPS).append(" actions per reasoning turn and at most ")
+                .append(NovaAgentPolicy.maxAgentTurns(codingTask)).append(" reasoning turns per goal.\n");
         p.append("Schema: {\"say\":\"short final response\",\"actions\":[{\"type\":\"tool\",\"value\":\"value\"}]}. If more work is needed, issue the next tool call instead of claiming completion. ")
                 .append("For multi-step UI goals, use ONE state-changing Android action per turn. After that action, rely on the fresh UI state supplied on the next reasoning turn. ")
                 .append("Do not assume a coordinate, button position, or previous screen remains valid after UI changes. Prefer semantic UI targeting with click_text when a visible label/content description identifies the intended control. ")
                 .append("Use click_index only when the current observed UI clearly provides a reliable numbered target. Never choose an action solely from memory when the current UI contradicts it. ")
                 .append("Keep web-dependent actions in separate turns so returned evidence can be inspected. For PC work, use pc_observe before consequential PC mutations when the current PC state matters, and never claim a PC operation succeeded unless its tool result has verified=true.\n");
-        p.append("Available tools:\n").append(tools.promptSummary());
+        if (codingTask) {
+            p.append("Coding-agent mode is active. Treat the task as an engineering workflow, not a single answer: INSPECT → PLAN → MODIFY → BUILD/TEST → DIAGNOSE → FIX → REBUILD/RETEST → VERIFY. ")
+                    .append("Use pc_search_text and pc_read_file to understand existing code before changing it. Use pc_write_file only for an intentional modification. After a write, read back or use the returned verification evidence. ")
+                    .append("Use pc_git_diff to review the actual change, then pc_build or pc_run to obtain real compiler/test evidence. If a build or test fails, inspect the error, make a targeted correction, rerun the failing verification, and continue until the requested result is verified or the task must stop safely. ")
+                    .append("Do not substitute a proposed patch, imagined build result, or explanation for actual tool evidence. Keep going across multiple reasoning turns when the task requires it.");
+        }
+        p.append("\nAvailable tools:\n").append(tools.promptSummary());
         p.append("\nObservation rules: screen_observe/read_screen describe the current Android accessibility UI tree. Treat that observation as potentially time-sensitive and re-observe after UI mutations. ")
                 .append("PC tools operate only through the authenticated NOVA companion and its configured workspace/command policy. Use memory_search only for relevant saved facts. Use remember only for durable facts/preferences explicitly provided by the user. ")
                 .append("Use parallel only for independent informational tools; never parallelize Android UI mutations. Prefer reversible actions and stop for unavailable permissions/authentication.");
