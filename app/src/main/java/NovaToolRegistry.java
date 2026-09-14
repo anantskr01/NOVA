@@ -40,8 +40,9 @@ public final class NovaToolRegistry {
         add("wait", "Wait for a bounded duration", true);
         add("pc_observe", "Observe the authenticated PC companion state", true);
         add("pc_list_dir", "List files/directories inside the authenticated PC workspace", true);
+        add("pc_search_text", "Search source files in the authenticated PC workspace for a literal text pattern", true);
         add("pc_read_file", "Read a bounded file inside the authenticated PC workspace", true);
-        add("pc_write_file", "Write and verify a file inside the authenticated PC workspace", true);
+        add("pc_write_file", "Write and verify a file inside the authenticated PC workspace", false);
         add("pc_git_status", "Inspect Git status in the authenticated PC workspace", true);
         add("pc_git_diff", "Inspect the current Git diff in the authenticated PC workspace", true);
         add("pc_build", "Run an allow-listed build tool in the authenticated PC workspace", false);
