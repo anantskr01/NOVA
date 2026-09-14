@@ -2,6 +2,7 @@ package com.aircontrol.pc;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -16,7 +17,10 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -30,9 +34,14 @@ public final class PcCompanionServer {
     private static final int MAX_OUTPUT = 12_000;
     private static final int MAX_SEARCH_FILES = 500;
     private static final int MAX_SEARCH_MATCHES = 200;
+    private static final long MAX_FILE_BYTES = 1024L * 1024L;
+    private static final Set<String> BUILD_EXECUTABLES = Set.of("./gradlew", "gradlew", "gradlew.bat", "mvn", "mvnw", "./mvnw", "npm", "node", "python", "python3");
+    private static final Set<String> RUN_EXECUTABLES = Set.of("git", "./gradlew", "gradlew", "gradlew.bat", "mvn", "mvnw", "./mvnw", "npm", "node", "python", "python3");
     private final String secret;
     private final Path workspace;
+    private final Path realWorkspace;
     private final Set<String> usedNonces = new HashSet<>();
+    private final ExecutorService processExecutor = Executors.newCachedThreadPool();
     private HttpServer server;
 
     public PcCompanionServer(String secret, Path workspace) throws IOException {
@@ -40,6 +49,7 @@ public final class PcCompanionServer {
         this.secret = secret;
         this.workspace = workspace.toAbsolutePath().normalize();
         Files.createDirectories(this.workspace);
+        this.realWorkspace = this.workspace.toRealPath();
     }
 
     public int start(String bindHost, int port) throws IOException {
@@ -55,11 +65,14 @@ public final class PcCompanionServer {
         return actualPort;
     }
 
-    public void stop() { if (server != null) server.stop(1); }
+    public void stop() {
+        if (server != null) server.stop(1);
+        processExecutor.shutdownNow();
+    }
 
     private void health(HttpExchange exchange) throws IOException {
         if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { send(exchange, 405, error("method_not_allowed").toString()); return; }
-        send(exchange, 200, new JSONObject().put("ok", true).put("service", "nova-pc-companion").put("protocol", 1).toString());
+        send(exchange, 200, new JSONObject().put("ok", true).put("service", "nova-pc-companion").put("protocol", 1).put("verified", true).toString());
     }
 
     private void observe(HttpExchange exchange) throws IOException {
@@ -67,7 +80,8 @@ public final class PcCompanionServer {
         if (!authenticate(exchange, "")) return;
         JSONObject out = new JSONObject().put("ok", true).put("os", System.getProperty("os.name", "unknown"))
                 .put("arch", System.getProperty("os.arch", "unknown")).put("java", System.getProperty("java.version", "unknown"))
-                .put("workspace", workspace.toString()).put("timestamp", Instant.now().toString());
+                .put("workspace", workspace.toString()).put("workspaceReal", realWorkspace.toString())
+                .put("timestamp", Instant.now().toString()).put("verified", true);
         send(exchange, 200, out.toString());
     }
 
@@ -82,7 +96,7 @@ public final class PcCompanionServer {
         if (!authenticate(exchange, body)) return;
         try {
             JSONObject request = new JSONObject(body);
-            String id = request.optString("id", "");
+            String id = request.optString("id", "").trim();
             String tool = request.optString("tool", "").trim().toLowerCase();
             JSONObject args = request.optJSONObject("args");
             if (id.isEmpty() || tool.isEmpty() || args == null) { send(exchange, 400, error("invalid_request").toString()); return; }
@@ -91,7 +105,9 @@ public final class PcCompanionServer {
             send(exchange, result.optBoolean("ok", false) ? 200 : 422, result.toString());
         } catch (PathOutsideWorkspaceException e) {
             send(exchange, 403, error("path_outside_workspace").put("retryable", false).toString());
-        } catch (Exception e) { send(exchange, 500, error("internal_error").toString()); }
+        } catch (Exception e) {
+            send(exchange, 500, error("internal_error").put("retryable", false).put("message", bounded(e.getMessage(), 500)).toString());
+        }
     }
 
     private JSONObject executeTool(String tool, JSONObject args) throws Exception {
@@ -150,8 +166,7 @@ public final class PcCompanionServer {
                 }
             }
         }
-        return new JSONObject().put("ok", true).put("query", query).put("filesScanned", filesScanned)
-                .put("matches", matches).put("truncated", matches.length() >= MAX_SEARCH_MATCHES).put("verified", true);
+        return new JSONObject().put("ok", true).put("query", query).put("filesScanned", filesScanned).put("matches", matches).put("truncated", matches.length() >= MAX_SEARCH_MATCHES).put("verified", true);
     }
 
     private boolean isIgnoredPath(Path file) {
@@ -165,59 +180,116 @@ public final class PcCompanionServer {
     private JSONObject readFile(JSONObject args) throws Exception {
         Path file = resolveWorkspacePath(args.optString("path", ""));
         if (!Files.isRegularFile(file)) return error("not_a_file");
-        long max = Math.min(args.optLong("maxBytes", 256 * 1024), 1024 * 1024);
+        long max = Math.min(Math.max(args.optLong("maxBytes", 256 * 1024), 1), MAX_FILE_BYTES);
         try (InputStream in = Files.newInputStream(file)) {
             byte[] data = in.readNBytes((int) max + 1);
             if (data.length > max) return error("file_too_large");
-            return new JSONObject().put("ok", true).put("path", file.toString()).put("content", new String(data, StandardCharsets.UTF_8)).put("sha256", sha256(data)).put("verified", true);
+            return new JSONObject().put("ok", true).put("path", workspace.relativize(file).toString().replace('\\', '/')).put("content", new String(data, StandardCharsets.UTF_8)).put("sha256", sha256(data)).put("verified", true);
         }
     }
 
     private JSONObject writeFile(JSONObject args) throws Exception {
         Path file = resolveWorkspacePath(args.optString("path", ""));
         byte[] expected = args.optString("content", "").getBytes(StandardCharsets.UTF_8);
-        if (expected.length > 1024 * 1024) return error("file_too_large");
-        Files.createDirectories(file.getParent());
+        if (expected.length > MAX_FILE_BYTES) return error("file_too_large");
+        String expectedSha = args.optString("expectedSha256", "").trim();
+        if (!expectedSha.isEmpty()) {
+            if (!Files.exists(file)) return error("file_changed_since_inspection").put("retryable", true);
+            if (!expectedSha.equals(sha256(Files.readAllBytes(file)))) return error("file_changed_since_inspection").put("retryable", true);
+        }
+        Path parent = file.getParent();
+        if (parent != null) {
+            resolveWorkspacePath(workspace.relativize(parent).toString());
+            Files.createDirectories(parent);
+        }
         Files.write(file, expected, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         byte[] actual = Files.readAllBytes(file);
-        return new JSONObject().put("ok", true).put("path", file.toString()).put("sha256", sha256(actual)).put("verified", Arrays.equals(actual, expected));
+        return new JSONObject().put("ok", true).put("path", workspace.relativize(file).toString().replace('\\', '/')).put("sha256", sha256(actual)).put("verified", Arrays.equals(actual, expected));
     }
 
     private JSONObject build(JSONObject args) throws Exception {
         String command = args.optString("command", "").trim();
         if (command.isEmpty()) return error("missing_command");
-        String executable = command.split("\\s+")[0];
-        Set<String> allowed = Set.of("./gradlew", "gradlew.bat", "mvn", "mvnw", "npm", "node", "python", "python3");
-        if (!allowed.contains(executable) && !executable.endsWith("/gradlew") && !executable.endsWith("\\gradlew.bat")) return error("build_command_not_allowed");
-        return runCommand(command.split("\\s+"), args);
+        String[] parts = tokenizeCommand(command);
+        if (parts.length == 0 || !isAllowedExecutable(parts[0], BUILD_EXECUTABLES)) return error("build_command_not_allowed");
+        return runCommand(parts, args);
     }
 
     private JSONObject runAllowlisted(JSONObject args) throws Exception {
         JSONArray command = args.optJSONArray("command");
         if (command == null || command.length() == 0) return error("missing_command");
-        String executable = command.optString(0, "");
-        if (!Set.of("git", "gradlew.bat", "npm", "node", "python", "python3").contains(executable)) return error("command_not_allowed");
         String[] parts = new String[command.length()];
-        for (int i = 0; i < command.length(); i++) parts[i] = command.optString(i, "");
+        for (int i = 0; i < command.length(); i++) {
+            parts[i] = command.optString(i, "").trim();
+            if (parts[i].isEmpty()) return error("invalid_command_argument");
+        }
+        if (!isAllowedExecutable(parts[0], RUN_EXECUTABLES)) return error("command_not_allowed");
+        if ("git".equals(parts[0]) && !isAllowedGitCommand(parts)) return error("git_command_not_allowed");
         return runCommand(parts, args);
     }
 
-    private JSONObject runCommand(String[] command, JSONObject args) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(command);
-        pb.directory(resolveWorkspacePath(args.optString("path", "")).toFile());
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
-        long timeout = Math.min(Math.max(args.optLong("timeoutMs", 60_000), 1_000), 120_000);
-        boolean finished = process.waitFor(timeout, TimeUnit.MILLISECONDS);
-        if (!finished) { process.destroyForcibly(); return new JSONObject().put("ok", false).put("error", "timeout").put("retryable", true).put("verified", false); }
-        byte[] out = process.getInputStream().readNBytes(MAX_OUTPUT);
-        int exit = process.exitValue();
-        return new JSONObject().put("ok", exit == 0).put("exitCode", exit).put("output", new String(out, StandardCharsets.UTF_8)).put("verified", exit == 0);
+    private boolean isAllowedExecutable(String executable, Set<String> allowed) {
+        if (allowed.contains(executable)) return true;
+        String normalized = executable.replace('\\', '/');
+        return normalized.endsWith("/gradlew") || normalized.endsWith("/gradlew.bat") || normalized.endsWith("/mvnw");
     }
 
-    private Path resolveWorkspacePath(String relative) throws PathOutsideWorkspaceException {
+    private boolean isAllowedGitCommand(String[] command) {
+        if (command.length < 2) return false;
+        return switch (command[1]) {
+            case "status", "diff", "log", "show", "rev-parse" -> true;
+            default -> false;
+        };
+    }
+
+    private JSONObject runCommand(String[] command, JSONObject args) throws Exception {
+        Path directory = resolveWorkspacePath(args.optString("path", ""));
+        if (!Files.isDirectory(directory)) return error("not_a_directory");
+        long timeout = Math.min(Math.max(args.optLong("timeoutMs", 60_000), 1_000), 120_000);
+        String operationId = UUID.randomUUID().toString();
+        long started = System.nanoTime();
+        Process process = new ProcessBuilder(command).directory(directory.toFile()).start();
+        Future<StreamCapture> stdout = processExecutor.submit(() -> capture(process.getInputStream(), MAX_OUTPUT));
+        Future<StreamCapture> stderr = processExecutor.submit(() -> capture(process.getErrorStream(), MAX_OUTPUT));
+        boolean finished = process.waitFor(timeout, TimeUnit.MILLISECONDS);
+        if (!finished) {
+            process.destroy();
+            if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly();
+            StreamCapture out = stdout.get(2, TimeUnit.SECONDS);
+            StreamCapture err = stderr.get(2, TimeUnit.SECONDS);
+            return new JSONObject().put("ok", false).put("error", "timeout").put("retryable", true).put("verified", false).put("operation_id", operationId).put("exitCode", -1).put("stdout", out.text).put("stderr", err.text).put("output_truncated", out.truncated || err.truncated).put("durationMs", elapsedMillis(started));
+        }
+        int exit = process.exitValue();
+        StreamCapture out = stdout.get(5, TimeUnit.SECONDS);
+        StreamCapture err = stderr.get(5, TimeUnit.SECONDS);
+        return new JSONObject().put("ok", exit == 0).put("retryable", false).put("exitCode", exit).put("stdout", out.text).put("stderr", err.text).put("output_truncated", out.truncated || err.truncated).put("operation_id", operationId).put("durationMs", elapsedMillis(started)).put("verified", exit == 0);
+    }
+
+    private StreamCapture capture(InputStream input, int maxBytes) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream(Math.min(maxBytes, 4096));
+        byte[] buffer = new byte[4096];
+        int total = 0;
+        boolean truncated = false;
+        int read;
+        while ((read = input.read(buffer)) != -1) {
+            int keep = Math.min(read, maxBytes - total);
+            if (keep > 0) { out.write(buffer, 0, keep); total += keep; }
+            if (keep < read) truncated = true;
+        }
+        return new StreamCapture(new String(out.toByteArray(), StandardCharsets.UTF_8), truncated);
+    }
+
+    private long elapsedMillis(long startedNanos) { return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos); }
+
+    private Path resolveWorkspacePath(String relative) throws PathOutsideWorkspaceException, IOException {
         Path candidate = relative == null || relative.isBlank() ? workspace : workspace.resolve(relative).normalize();
         if (!candidate.startsWith(workspace)) throw new PathOutsideWorkspaceException();
+        if (Files.exists(candidate)) {
+            if (!candidate.toRealPath().startsWith(realWorkspace)) throw new PathOutsideWorkspaceException();
+        } else {
+            Path parent = candidate.getParent();
+            if (parent != null && Files.exists(parent) && !parent.toRealPath().startsWith(realWorkspace)) throw new PathOutsideWorkspaceException();
+        }
         return candidate;
     }
 
@@ -250,12 +322,38 @@ public final class PcCompanionServer {
         byte[] hash = MessageDigest.getInstance("SHA-256").digest(data);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
     }
-    private static JSONObject error(String code) { return new JSONObject().put("ok", false).put("error", code).put("verified", false); }
+
+    private static String[] tokenizeCommand(String command) {
+        java.util.ArrayList<String> parts = new java.util.ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        char quote = 0;
+        boolean escaping = false;
+        for (int i = 0; i < command.length(); i++) {
+            char c = command.charAt(i);
+            if (escaping) { current.append(c); escaping = false; continue; }
+            if (c == '\\' && quote != '\'') { escaping = true; continue; }
+            if (c == '\'' || c == '"') {
+                if (quote == 0) quote = c; else if (quote == c) quote = 0; else current.append(c);
+                continue;
+            }
+            if (Character.isWhitespace(c) && quote == 0) {
+                if (current.length() > 0) { parts.add(current.toString()); current.setLength(0); }
+            } else current.append(c);
+        }
+        if (escaping) current.append('\\');
+        if (quote != 0) throw new IllegalArgumentException("unterminated_quote");
+        if (current.length() > 0) parts.add(current.toString());
+        return parts.toArray(new String[0]);
+    }
+
+    private static String bounded(String value, int max) { if (value == null) return ""; return value.length() <= max ? value : value.substring(0, max); }
+    private static JSONObject error(String code) { return new JSONObject().put("ok", false).put("error", code).put("retryable", false).put("verified", false); }
     private static void send(HttpExchange exchange, int code, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
         exchange.sendResponseHeaders(code, bytes.length);
         try (OutputStream out = exchange.getResponseBody()) { out.write(bytes); }
     }
+    private static final class StreamCapture { final String text; final boolean truncated; StreamCapture(String text, boolean truncated) { this.text = text; this.truncated = truncated; } }
     private static final class PathOutsideWorkspaceException extends IOException { }
 }
