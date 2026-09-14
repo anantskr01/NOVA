@@ -54,7 +54,11 @@ public final class NovaAgentPlanner {
     public boolean execute(String rawPlan) { return executeDetailed(rawPlan).completed; }
 
     public synchronized JSONObject codingStateSnapshot() {
-        return codingState == null ? new JSONObject().put("phase", "IDLE") : codingState.snapshot();
+        try {
+            return codingState == null ? new JSONObject().put("phase", "IDLE") : codingState.snapshot();
+        } catch (Exception e) {
+            return new JSONObject();
+        }
     }
 
     public ExecutionResult executeDetailed(String rawPlan) {
@@ -65,6 +69,7 @@ public final class NovaAgentPlanner {
             String say = plan.optString("say", "").trim();
             JSONArray actions = plan.optJSONArray("actions");
             if (actions == null || actions.length() == 0) {
+                if (codingState != null && !codingState.isTerminal()) codingState.complete();
                 if (!say.isEmpty()) listener.reply(say);
                 return result(true, true, 0, "", screen(), say, "");
             }
