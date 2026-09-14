@@ -38,6 +38,7 @@ public final class NovaToolRegistry {
         add("parallel", "Run independent informational tools concurrently", true);
         add("settings", "Open Android settings", true);
         add("wait", "Wait for a bounded duration", true);
+        add("pc_observe", "Observe the authenticated PC companion state", true);
         add("pc_list_dir", "List files/directories inside the authenticated PC workspace", true);
         add("pc_read_file", "Read a bounded file inside the authenticated PC workspace", true);
         add("pc_write_file", "Write and verify a file inside the authenticated PC workspace", true);
