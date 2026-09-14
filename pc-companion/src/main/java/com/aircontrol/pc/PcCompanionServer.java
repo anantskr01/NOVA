@@ -109,7 +109,7 @@ public final class PcCompanionServer {
         return new JSONObject().put("ok", true).put("entries", entries).put("verified", true);
     }
 
-    private JSONObject readFile(JSONObject args) throws IOException {
+    private JSONObject readFile(JSONObject args) throws Exception {
         Path file = resolveWorkspacePath(args.optString("path", ""));
         if (!Files.isRegularFile(file)) return error("not_a_file");
         long max = Math.min(args.optLong("maxBytes", 256 * 1024), 1024 * 1024);
@@ -120,7 +120,7 @@ public final class PcCompanionServer {
         }
     }
 
-    private JSONObject writeFile(JSONObject args) throws IOException {
+    private JSONObject writeFile(JSONObject args) throws Exception {
         Path file = resolveWorkspacePath(args.optString("path", ""));
         byte[] expected = args.optString("content", "").getBytes(StandardCharsets.UTF_8);
         if (expected.length > 1024 * 1024) return error("file_too_large");
