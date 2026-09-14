@@ -34,9 +34,7 @@ public final class PcCompanionServer {
     private HttpServer server;
 
     public PcCompanionServer(String secret, Path workspace) throws IOException {
-        if (secret == null || secret.length() < 32) {
-            throw new IllegalArgumentException("NOVA_PC_TOKEN must be at least 32 characters");
-        }
+        if (secret == null || secret.length() < 32) throw new IllegalArgumentException("NOVA_PC_TOKEN must be at least 32 characters");
         this.secret = secret;
         this.workspace = workspace.toAbsolutePath().normalize();
         Files.createDirectories(this.workspace);
@@ -53,40 +51,28 @@ public final class PcCompanionServer {
         System.out.println("Workspace: " + workspace);
     }
 
-    public void stop() {
-        if (server != null) server.stop(1);
-    }
+    public void stop() { if (server != null) server.stop(1); }
 
     private void health(HttpExchange exchange) throws IOException {
-        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            send(exchange, 405, error("method_not_allowed")); return;
-        }
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { send(exchange, 405, error("method_not_allowed").toString()); return; }
         send(exchange, 200, new JSONObject().put("ok", true).put("service", "nova-pc-companion").put("protocol", 1).toString());
     }
 
     private void observe(HttpExchange exchange) throws IOException {
-        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            send(exchange, 405, error("method_not_allowed")); return;
-        }
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { send(exchange, 405, error("method_not_allowed").toString()); return; }
         if (!authenticate(exchange, "")) return;
-        JSONObject out = new JSONObject();
-        out.put("ok", true);
-        out.put("os", System.getProperty("os.name", "unknown"));
-        out.put("arch", System.getProperty("os.arch", "unknown"));
-        out.put("java", System.getProperty("java.version", "unknown"));
-        out.put("workspace", workspace.toString());
-        out.put("timestamp", Instant.now().toString());
+        JSONObject out = new JSONObject().put("ok", true).put("os", System.getProperty("os.name", "unknown"))
+                .put("arch", System.getProperty("os.arch", "unknown")).put("java", System.getProperty("java.version", "unknown"))
+                .put("workspace", workspace.toString()).put("timestamp", Instant.now().toString());
         send(exchange, 200, out.toString());
     }
 
     private void execute(HttpExchange exchange) throws IOException {
-        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-            send(exchange, 405, error("method_not_allowed")); return;
-        }
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { send(exchange, 405, error("method_not_allowed").toString()); return; }
         String body;
         try (InputStream in = exchange.getRequestBody()) {
             byte[] bytes = in.readNBytes(MAX_BODY + 1);
-            if (bytes.length > MAX_BODY) { send(exchange, 413, error("request_too_large")); return; }
+            if (bytes.length > MAX_BODY) { send(exchange, 413, error("request_too_large").toString()); return; }
             body = new String(bytes, StandardCharsets.UTF_8);
         }
         if (!authenticate(exchange, body)) return;
@@ -95,15 +81,11 @@ public final class PcCompanionServer {
             String id = request.optString("id", "");
             String tool = request.optString("tool", "").trim().toLowerCase();
             JSONObject args = request.optJSONObject("args");
-            if (id.isEmpty() || tool.isEmpty() || args == null) {
-                send(exchange, 400, error("invalid_request")); return;
-            }
+            if (id.isEmpty() || tool.isEmpty() || args == null) { send(exchange, 400, error("invalid_request").toString()); return; }
             JSONObject result = executeTool(tool, args);
             result.put("id", id).put("tool", tool).put("verified", result.optBoolean("verified", false));
             send(exchange, result.optBoolean("ok", false) ? 200 : 422, result.toString());
-        } catch (Exception e) {
-            send(exchange, 500, error("internal_error"));
-        }
+        } catch (Exception e) { send(exchange, 500, error("internal_error").toString()); }
     }
 
     private JSONObject executeTool(String tool, JSONObject args) throws Exception {
@@ -123,9 +105,7 @@ public final class PcCompanionServer {
         Path dir = resolveWorkspacePath(args.optString("path", ""));
         if (!Files.isDirectory(dir)) return error("not_a_directory");
         JSONArray entries = new JSONArray();
-        try (var stream = Files.list(dir)) {
-            stream.limit(500).forEach(p -> entries.put(new JSONObject().put("name", p.getFileName().toString()).put("directory", Files.isDirectory(p))));
-        }
+        try (var stream = Files.list(dir)) { stream.limit(500).forEach(p -> entries.put(new JSONObject().put("name", p.getFileName().toString()).put("directory", Files.isDirectory(p)))); }
         return new JSONObject().put("ok", true).put("entries", entries).put("verified", true);
     }
 
@@ -176,10 +156,7 @@ public final class PcCompanionServer {
         Process process = pb.start();
         long timeout = Math.min(Math.max(args.optLong("timeoutMs", 60_000), 1_000), 120_000);
         boolean finished = process.waitFor(timeout, TimeUnit.MILLISECONDS);
-        if (!finished) {
-            process.destroyForcibly();
-            return new JSONObject().put("ok", false).put("error", "timeout").put("retryable", true).put("verified", false);
-        }
+        if (!finished) { process.destroyForcibly(); return new JSONObject().put("ok", false).put("error", "timeout").put("retryable", true).put("verified", false); }
         byte[] out = process.getInputStream().readNBytes(MAX_OUTPUT);
         int exit = process.exitValue();
         return new JSONObject().put("ok", exit == 0).put("exitCode", exit).put("output", new String(out, StandardCharsets.UTF_8)).put("verified", exit == 0);
@@ -195,16 +172,16 @@ public final class PcCompanionServer {
         String timestamp = exchange.getRequestHeaders().getFirst("X-NOVA-Timestamp");
         String nonce = exchange.getRequestHeaders().getFirst("X-NOVA-Nonce");
         String signature = exchange.getRequestHeaders().getFirst("X-NOVA-Signature");
-        if (timestamp == null || nonce == null || signature == null) { send(exchange, 401, error("missing_auth")); return false; }
+        if (timestamp == null || nonce == null || signature == null) { send(exchange, 401, error("missing_auth").toString()); return false; }
         long ts;
-        try { ts = Long.parseLong(timestamp); } catch (NumberFormatException e) { send(exchange, 401, error("invalid_timestamp")); return false; }
-        if (Math.abs(Instant.now().getEpochSecond() - ts) > MAX_CLOCK_SKEW_SECONDS) { send(exchange, 401, error("stale_request")); return false; }
+        try { ts = Long.parseLong(timestamp); } catch (NumberFormatException e) { send(exchange, 401, error("invalid_timestamp").toString()); return false; }
+        if (Math.abs(Instant.now().getEpochSecond() - ts) > MAX_CLOCK_SKEW_SECONDS) { send(exchange, 401, error("stale_request").toString()); return false; }
         synchronized (usedNonces) {
-            usedNonces.removeIf(n -> n.length() > 11 && Long.parseLong(n.substring(n.lastIndexOf(':') + 1)) < ts - MAX_CLOCK_SKEW_SECONDS);
-            if (!usedNonces.add(nonce + ":" + ts)) { send(exchange, 401, error("replayed_request")); return false; }
+            usedNonces.removeIf(n -> { int split = n.lastIndexOf(':'); return split > 0 && Long.parseLong(n.substring(split + 1)) < ts - MAX_CLOCK_SKEW_SECONDS; });
+            if (!usedNonces.add(nonce + ":" + ts)) { send(exchange, 401, error("replayed_request").toString()); return false; }
         }
         String expected = hmac(timestamp + "\n" + nonce + "\n" + body);
-        if (!MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), signature.getBytes(StandardCharsets.UTF_8))) { send(exchange, 401, error("bad_signature")); return false; }
+        if (!MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), signature.getBytes(StandardCharsets.UTF_8))) { send(exchange, 401, error("bad_signature").toString()); return false; }
         return true;
     }
 
