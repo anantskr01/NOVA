@@ -17,6 +17,10 @@ public final class NovaCodingTaskState {
     private int tests;
     private int failures;
     private int recoveries;
+    private boolean writeVerified;
+    private boolean diffVerified;
+    private boolean buildVerified;
+    private boolean testVerified;
     private String lastTool = "";
     private String lastError = "";
     private String lastEvidence = "";
@@ -31,11 +35,11 @@ public final class NovaCodingTaskState {
         String path = value == null ? "" : value.trim();
         if ("pc_search_text".equals(tool)) phase = Phase.INSPECT;
         else if ("pc_read_file".equals(tool)) { if (!path.isEmpty()) inspectedFiles.add(path); phase = Phase.PLAN; }
-        else if ("pc_write_file".equals(tool)) { mutations++; if (!path.isEmpty()) modifiedFiles.add(path); phase = verified ? Phase.VERIFY_WRITE : Phase.RECOVER; }
-        else if ("pc_git_diff".equals(tool)) phase = verified ? Phase.REVIEW_DIFF : Phase.RECOVER;
-        else if ("pc_build".equals(tool)) { builds++; phase = verified ? Phase.BUILD : Phase.DIAGNOSE; }
-        else if ("pc_run".equals(tool)) { tests++; phase = verified ? Phase.TEST : Phase.DIAGNOSE; }
-        else if ("pc_git_status".equals(tool) || "pc_observe".equals(tool)) phase = Phase.INSPECT;
+        else if ("pc_write_file".equals(tool)) { mutations++; writeVerified = verified; if (!path.isEmpty()) modifiedFiles.add(path); phase = verified ? Phase.VERIFY_WRITE : Phase.RECOVER; }
+        else if ("pc_git_diff".equals(tool)) { diffVerified = verified; phase = verified ? Phase.REVIEW_DIFF : Phase.RECOVER; }
+        else if ("pc_build".equals(tool)) { builds++; buildVerified = verified; phase = verified ? Phase.BUILD : Phase.DIAGNOSE; }
+        else if ("pc_run".equals(tool)) { tests++; testVerified = verified; phase = verified ? Phase.TEST : Phase.DIAGNOSE; }
+        else if ("pc_git_status".equals(tool) || "pc_observe".equals(tool) || "pc_list_dir".equals(tool)) phase = Phase.INSPECT;
         if (!verified) { failures++; lastError = extractError(result); phase = Phase.DIAGNOSE; }
     }
 
@@ -43,6 +47,12 @@ public final class NovaCodingTaskState {
     public synchronized void complete() { phase = Phase.COMPLETE; }
     public synchronized void fail(String error) { phase = Phase.FAILED; lastError = error == null ? "" : error; }
     public synchronized boolean isTerminal() { return phase == Phase.COMPLETE || phase == Phase.FAILED; }
+
+    /** A coding mutation is complete only after the changed artifact, diff, build and test are all verified. */
+    public synchronized boolean canComplete() {
+        if (mutations == 0) return !inspectedFiles.isEmpty() || builds > 0 || tests > 0;
+        return writeVerified && diffVerified && buildVerified && testVerified;
+    }
 
     public synchronized JSONObject snapshot() {
         try {
@@ -53,7 +63,9 @@ public final class NovaCodingTaskState {
             return new JSONObject()
                     .put("phase", phase.name()).put("turns", turns).put("mutations", mutations)
                     .put("builds", builds).put("tests", tests).put("failures", failures)
-                    .put("recoveries", recoveries).put("startedAt", startedAt).put("lastTool", lastTool)
+                    .put("recoveries", recoveries).put("writeVerified", writeVerified)
+                    .put("diffVerified", diffVerified).put("buildVerified", buildVerified)
+                    .put("testVerified", testVerified).put("startedAt", startedAt).put("lastTool", lastTool)
                     .put("lastError", lastError).put("lastEvidence", lastEvidence)
                     .put("inspectedFiles", inspected).put("modifiedFiles", modified);
         } catch (Exception e) {
