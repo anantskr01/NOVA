@@ -23,5 +23,7 @@ jobs:
           java-version: '17'
       - name: Make Gradle executable
         run: chmod +x gradlew
+      - name: Build PC companion
+        run: ./gradlew --no-daemon :pc-companion:build
       - name: Assemble debug APK
-        run: ./gradlew --no-daemon clean assembleDebug
+        run: ./gradlew --no-daemon :app:clean :app:assembleDebug
