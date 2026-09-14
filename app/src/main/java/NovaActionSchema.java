@@ -16,7 +16,7 @@ public final class NovaActionSchema {
             "open_url", "open_package", "open_app", "click_text", "click_index",
             "type_text", "press_enter", "search", "read_screen", "screen_observe",
             "web_search", "web_fetch", "web_research", "memory_search", "remember",
-            "parallel", "settings", "wait", "pc_observe",
+            "parallel", "settings", "wait", "pc_observe", "pc_project_discover",
             "pc_list_dir", "pc_search_text", "pc_read_file", "pc_write_file",
             "pc_git_status", "pc_git_diff", "pc_build", "pc_run", "none"
     )));
@@ -30,7 +30,7 @@ public final class NovaActionSchema {
 
     private static final Set<String> INFORMATIONAL = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
             "web_search", "web_fetch", "web_research", "screen_observe",
-            "read_screen", "memory_search", "remember", "pc_observe",
+            "read_screen", "memory_search", "remember", "pc_observe", "pc_project_discover",
             "pc_list_dir", "pc_search_text", "pc_read_file", "pc_git_status", "pc_git_diff"
     )));
 
