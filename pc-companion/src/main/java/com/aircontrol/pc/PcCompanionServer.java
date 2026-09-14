@@ -12,9 +12,11 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -28,6 +30,8 @@ public final class PcCompanionServer {
     private static final int MAX_BODY = 64 * 1024;
     private static final long MAX_CLOCK_SKEW_SECONDS = 60;
     private static final int MAX_OUTPUT = 12_000;
+    private static final int MAX_SEARCH_FILES = 500;
+    private static final int MAX_SEARCH_MATCHES = 200;
     private final String secret;
     private final Path workspace;
     private final Set<String> usedNonces = new HashSet<>();
@@ -91,6 +95,7 @@ public final class PcCompanionServer {
     private JSONObject executeTool(String tool, JSONObject args) throws Exception {
         return switch (tool) {
             case "pc_list_dir" -> listDir(args);
+            case "pc_search_text" -> searchText(args);
             case "pc_read_file" -> readFile(args);
             case "pc_write_file" -> writeFile(args);
             case "pc_git_status" -> runCommand(new String[]{"git", "status", "--short", "--branch"}, args);
@@ -107,6 +112,52 @@ public final class PcCompanionServer {
         JSONArray entries = new JSONArray();
         try (var stream = Files.list(dir)) { stream.limit(500).forEach(p -> entries.put(new JSONObject().put("name", p.getFileName().toString()).put("directory", Files.isDirectory(p)))); }
         return new JSONObject().put("ok", true).put("entries", entries).put("verified", true);
+    }
+
+    private JSONObject searchText(JSONObject args) throws Exception {
+        String query = args.optString("query", "");
+        if (query.isEmpty()) return error("missing_query");
+        String extension = args.optString("extension", "").trim().toLowerCase();
+        boolean caseSensitive = args.optBoolean("caseSensitive", false);
+        String needle = caseSensitive ? query : query.toLowerCase();
+        JSONArray matches = new JSONArray();
+        int filesScanned = 0;
+        try (var stream = Files.walk(workspace)) {
+            var iterator = stream.filter(Files::isRegularFile).filter(p -> !isIgnoredPath(p)).iterator();
+            while (iterator.hasNext() && filesScanned < MAX_SEARCH_FILES && matches.length() < MAX_SEARCH_MATCHES) {
+                Path file = iterator.next();
+                if (!extension.isEmpty() && !file.getFileName().toString().toLowerCase().endsWith(extension)) continue;
+                filesScanned++;
+                byte[] data;
+                try { data = Files.readAllBytes(file); } catch (Exception ignored) { continue; }
+                if (data.length > 2 * 1024 * 1024) continue;
+                String text = new String(data, StandardCharsets.UTF_8);
+                String haystack = caseSensitive ? text : text.toLowerCase();
+                int offset = 0;
+                while (offset < haystack.length() && matches.length() < MAX_SEARCH_MATCHES) {
+                    int hit = haystack.indexOf(needle, offset);
+                    if (hit < 0) break;
+                    int line = 1;
+                    for (int i = 0; i < hit && i < text.length(); i++) if (text.charAt(i) == '\n') line++;
+                    int lineStart = text.lastIndexOf('\n', Math.max(0, hit - 1)) + 1;
+                    int lineEnd = text.indexOf('\n', hit);
+                    if (lineEnd < 0) lineEnd = text.length();
+                    String snippet = text.substring(lineStart, Math.min(lineEnd, lineStart + 500)).trim();
+                    matches.put(new JSONObject().put("path", workspace.relativize(file).toString().replace('\\', '/')).put("line", line).put("snippet", snippet));
+                    offset = hit + Math.max(1, query.length());
+                }
+            }
+        }
+        return new JSONObject().put("ok", true).put("query", query).put("filesScanned", filesScanned)
+                .put("matches", matches).put("truncated", matches.length() >= MAX_SEARCH_MATCHES).put("verified", true);
+    }
+
+    private boolean isIgnoredPath(Path file) {
+        for (Path part : workspace.relativize(file)) {
+            String name = part.toString();
+            if (name.equals(".git") || name.equals("build") || name.equals(".gradle") || name.equals("node_modules") || name.equals(".idea")) return true;
+        }
+        return false;
     }
 
     private JSONObject readFile(JSONObject args) throws Exception {
