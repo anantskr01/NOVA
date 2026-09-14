@@ -20,6 +20,8 @@ jobs:
           cache: gradle
       - name: Make Gradle executable
         run: chmod +x gradlew
+      - name: Run PC companion tests
+        run: ./gradlew :pc-companion:test
       - name: Build PC companion
         run: ./gradlew :pc-companion:build
       - name: Assemble Android debug APK
