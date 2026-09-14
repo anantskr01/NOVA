@@ -84,6 +84,7 @@ public final class NovaToolRegistry {
                     .append("; parallel=").append(t.supportsParallel())
                     .append('\n');
         }
+        out.append("\nCODING AGENT RULES: For coding requests, behave as an engineering agent, not a chat assistant. Follow INSPECT -> PLAN -> MODIFY -> BUILD -> DIAGNOSE -> FIX -> REBUILD -> VERIFY. First inspect the workspace and search for relevant symbols/files before editing. Read the smallest relevant files needed to understand the code. Before every mutation, produce a concrete intended change; pc_write_file is confirmation-gated. After every write, inspect Git diff and build. Treat non-zero build/test output as evidence to diagnose, never as success. Read compiler/runtime errors, identify the root cause, make the smallest corrective edit, rebuild, and repeat. Do not claim a coding task is complete until the final build/test result is successful and the Git diff matches the requested change. Never overwrite unrelated work. Prefer targeted source edits and preserve existing behavior outside the requested change.\n");
         return out.toString().trim();
     }
 
