@@ -89,6 +89,8 @@ public final class PcCompanionServer {
             JSONObject result = executeTool(tool, args);
             result.put("id", id).put("tool", tool).put("verified", result.optBoolean("verified", false));
             send(exchange, result.optBoolean("ok", false) ? 200 : 422, result.toString());
+        } catch (PathOutsideWorkspaceException e) {
+            send(exchange, 403, error("path_outside_workspace").put("retryable", false).toString());
         } catch (Exception e) { send(exchange, 500, error("internal_error").toString()); }
     }
 
@@ -213,9 +215,9 @@ public final class PcCompanionServer {
         return new JSONObject().put("ok", exit == 0).put("exitCode", exit).put("output", new String(out, StandardCharsets.UTF_8)).put("verified", exit == 0);
     }
 
-    private Path resolveWorkspacePath(String relative) throws IOException {
+    private Path resolveWorkspacePath(String relative) throws PathOutsideWorkspaceException {
         Path candidate = relative == null || relative.isBlank() ? workspace : workspace.resolve(relative).normalize();
-        if (!candidate.startsWith(workspace)) throw new IOException("path_outside_workspace");
+        if (!candidate.startsWith(workspace)) throw new PathOutsideWorkspaceException();
         return candidate;
     }
 
@@ -244,17 +246,14 @@ public final class PcCompanionServer {
         } catch (Exception e) { throw new IllegalStateException(e); }
     }
 
-    private static String sha256(byte[] data) throws Exception {
-        byte[] hash = MessageDigest.getInstance("SHA-256").digest(data);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
-    }
-
+    private static byte[] sha256Bytes(byte[] data) throws Exception { return MessageDigest.getInstance("SHA-256").digest(data); }
+    private static String sha256(byte[] data) throws Exception { return Base64.getUrlEncoder().withoutPadding().encodeToString(sha256Bytes(data)); }
     private static JSONObject error(String code) { return new JSONObject().put("ok", false).put("error", code).put("verified", false); }
-
     private static void send(HttpExchange exchange, int code, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
         exchange.sendResponseHeaders(code, bytes.length);
         try (OutputStream out = exchange.getResponseBody()) { out.write(bytes); }
     }
+    private static final class PathOutsideWorkspaceException extends IOException { }
 }
