@@ -16,7 +16,9 @@ public final class NovaActionSchema {
             "open_url", "open_package", "open_app", "click_text", "click_index",
             "type_text", "press_enter", "search", "read_screen", "screen_observe",
             "web_search", "web_fetch", "web_research", "memory_search", "remember",
-            "parallel", "settings", "wait", "none"
+            "parallel", "settings", "wait",
+            "pc_list_dir", "pc_read_file", "pc_write_file", "pc_git_status", "pc_git_diff",
+            "pc_build", "pc_run", "none"
     )));
 
     private static final Set<String> UI_MUTATIONS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
@@ -28,7 +30,8 @@ public final class NovaActionSchema {
 
     private static final Set<String> INFORMATIONAL = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
             "web_search", "web_fetch", "web_research", "screen_observe",
-            "read_screen", "memory_search", "remember"
+            "read_screen", "memory_search", "remember",
+            "pc_list_dir", "pc_read_file", "pc_git_status", "pc_git_diff"
     )));
 
     public static boolean isKnown(String type) {
@@ -47,17 +50,13 @@ public final class NovaActionSchema {
         return isInformational(type);
     }
 
-    /** Returns an empty string when valid, otherwise a compact validation error. */
     public static String validate(JSONObject action) {
         if (action == null) return "action_missing";
-
         String type = action.optString("type", "").trim().toLowerCase();
         if (!isKnown(type)) return "unknown_action:" + type;
         if ("none".equals(type)) return "";
-
         String value = action.optString("value", "").trim();
         if (requiresNonEmptyValue(type) && value.isEmpty()) return "value_empty:" + type;
-
         if ("click_index".equals(type)) {
             try {
                 if (Integer.parseInt(value) < 1) return "invalid_index:" + value;
@@ -65,7 +64,6 @@ public final class NovaActionSchema {
                 return "invalid_index:" + value;
             }
         }
-
         if ("wait".equals(type)) {
             try {
                 long ms = Long.parseLong(value);
@@ -74,12 +72,9 @@ public final class NovaActionSchema {
                 return "invalid_wait:" + value;
             }
         }
-
         if ("open_url".equals(type)) {
             String lower = value.toLowerCase();
-            if (!(lower.startsWith("http://") || lower.startsWith("https://"))) {
-                return "invalid_url_scheme";
-            }
+            if (!(lower.startsWith("http://") || lower.startsWith("https://"))) return "invalid_url_scheme";
         }
         return "";
     }
@@ -91,6 +86,8 @@ public final class NovaActionSchema {
             case "search": case "web_search": case "web_fetch":
             case "web_research": case "memory_search": case "remember":
             case "parallel": case "wait":
+                return true;
+            case "pc_read_file": case "pc_write_file": case "pc_build": case "pc_run":
                 return true;
             default:
                 return false;
