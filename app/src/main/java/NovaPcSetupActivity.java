@@ -87,18 +87,22 @@ public final class NovaPcSetupActivity extends Activity {
             status.setText("Token must contain at least 32 characters.");
             return;
         }
-        try {
-            new NovaPcCredentials(this).setSecret(token);
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(ENDPOINT, endpoint).apply();
-            status.setText("Testing PC companion…");
-            new Thread(() -> {
-                boolean connected = new NovaPcHttpClient(endpoint, token).isConnected();
-                runOnUiThread(() -> status.setText(connected
-                        ? "PC COMPANION CONNECTED • protocol 1 verified"
-                        : "PC companion not reachable/authenticated. Check PC IP, port, firewall, and token."));
-            }, "nova-pc-pair-test").start();
-        } catch (Exception e) {
-            status.setText("Could not store PC credentials safely.");
-        }
+        status.setText("Testing PC companion…");
+        new Thread(() -> {
+            boolean connected = new NovaPcHttpClient(endpoint, token).isConnected();
+            runOnUiThread(() -> {
+                if (!connected) {
+                    status.setText("PC companion not reachable/authenticated. Check PC IP, port, firewall, and token.");
+                    return;
+                }
+                try {
+                    new NovaPcCredentials(this).setSecret(token);
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(ENDPOINT, endpoint).apply();
+                    status.setText("PC COMPANION CONNECTED • protocol 1 verified");
+                } catch (Exception e) {
+                    status.setText("PC is reachable, but NOVA could not store the credentials safely.");
+                }
+            });
+        }, "nova-pc-pair-test").start();
     }
 }
