@@ -26,7 +26,22 @@ public final class NovaPcHttpClient implements NovaPcAgent {
         this.secret = secret == null ? "" : secret;
     }
 
-    @Override public boolean isConnected() { return connected; }
+    @Override public boolean isConnected() {
+        if (baseUrl.isEmpty() || secret.length() < 32) {
+            connected = false;
+            return false;
+        }
+        try {
+            JSONObject response = request("/v1/health", "GET", "");
+            connected = response.optBoolean("ok", false)
+                    && response.optInt("protocol", 0) == 1
+                    && response.optBoolean("verified", false);
+            return connected;
+        } catch (Exception e) {
+            connected = false;
+            return false;
+        }
+    }
 
     @Override public NovaToolResult execute(NovaToolInput input) {
         if (input == null) return NovaToolResult.failure("", "invalid_input", "Invalid PC tool input", false);
@@ -41,7 +56,7 @@ public final class NovaPcHttpClient implements NovaPcAgent {
                     .put("args", input.arguments);
             JSONObject response = request("/v1/execute", "POST", request.toString());
             boolean ok = response.optBoolean("ok", false);
-            connected = true;
+            connected = ok;
             if (ok) {
                 return NovaToolResult.success(input.toolType, response.toString(), response.optBoolean("verified", false));
             }
@@ -54,10 +69,13 @@ public final class NovaPcHttpClient implements NovaPcAgent {
     }
 
     @Override public String observe() {
-        if (baseUrl.isEmpty() || secret.length() < 32) return "pc_not_configured";
+        if (baseUrl.isEmpty() || secret.length() < 32) {
+            connected = false;
+            return "pc_not_configured";
+        }
         try {
             JSONObject response = request("/v1/observe", "GET", "");
-            connected = response.optBoolean("ok", false);
+            connected = response.optBoolean("ok", false) && response.optBoolean("verified", false);
             return response.toString();
         } catch (Exception e) {
             connected = false;
@@ -70,27 +88,32 @@ public final class NovaPcHttpClient implements NovaPcAgent {
     private JSONObject request(String path, String method, String body) throws Exception {
         URI uri = URI.create(baseUrl + path);
         HttpURLConnection connection = (HttpURLConnection) uri.toURL().openConnection();
-        connection.setRequestMethod(method);
-        connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        connection.setReadTimeout(READ_TIMEOUT_MS);
-        connection.setRequestProperty("Accept", "application/json");
-        long timestamp = System.currentTimeMillis() / 1000L;
-        String nonce = UUID.randomUUID().toString();
-        String signature = hmac(timestamp + "\n" + nonce + "\n" + body);
-        connection.setRequestProperty("X-NOVA-Timestamp", Long.toString(timestamp));
-        connection.setRequestProperty("X-NOVA-Nonce", nonce);
-        connection.setRequestProperty("X-NOVA-Signature", signature);
-        if ("POST".equals(method)) {
-            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
+        try {
+            connection.setRequestMethod(method);
+            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            connection.setReadTimeout(READ_TIMEOUT_MS);
+            connection.setUseCaches(false);
+            connection.setRequestProperty("Accept", "application/json");
+            long timestamp = System.currentTimeMillis() / 1000L;
+            String nonce = UUID.randomUUID().toString();
+            String signature = hmac(timestamp + "\n" + nonce + "\n" + body);
+            connection.setRequestProperty("X-NOVA-Timestamp", Long.toString(timestamp));
+            connection.setRequestProperty("X-NOVA-Nonce", nonce);
+            connection.setRequestProperty("X-NOVA-Signature", signature);
+            if ("POST".equals(method)) {
+                byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
+            }
+            int status = connection.getResponseCode();
+            InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            String response = readBounded(stream);
+            if (response.isEmpty()) throw new IllegalStateException("empty_pc_response:" + status);
+            return new JSONObject(response);
+        } finally {
+            connection.disconnect();
         }
-        int status = connection.getResponseCode();
-        InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-        String response = readBounded(stream);
-        if (response.isEmpty()) throw new IllegalStateException("empty_pc_response:" + status);
-        return new JSONObject(response);
     }
 
     private String hmac(String data) throws Exception {
