@@ -89,10 +89,12 @@ public final class NovaPcSetupActivity extends Activity {
         }
         status.setText("Testing PC companion…");
         new Thread(() -> {
-            boolean connected = new NovaPcHttpClient(endpoint, token).isConnected();
+            NovaPcHttpClient client = new NovaPcHttpClient(endpoint, token);
+            boolean connected = client.isConnected();
+            String error = client.getLastError();
             runOnUiThread(() -> {
                 if (!connected) {
-                    status.setText("PC companion not reachable/authenticated. Check PC IP, port, firewall, and token.");
+                    status.setText(pairingError(error));
                     return;
                 }
                 try {
@@ -104,5 +106,16 @@ public final class NovaPcSetupActivity extends Activity {
                 }
             });
         }, "nova-pc-pair-test").start();
+    }
+
+    private String pairingError(String error) {
+        if (error == null || error.isBlank()) return "PC companion connection failed. Check PC IP, port, firewall, and token.";
+        if ("bad_signature".equals(error)) return "PC reached, but token authentication failed (bad_signature). Use the token from the currently running companion.";
+        if ("missing_auth".equals(error)) return "PC reached, but authentication headers were rejected (missing_auth).";
+        if ("stale_request".equals(error)) return "PC reached, but the request timestamp was rejected (stale_request). Check PC/tablet clocks.";
+        if ("replayed_request".equals(error)) return "PC reached, but the request nonce was rejected (replayed_request). Try Pair again.";
+        if (error.contains("ConnectException") || error.contains("connection refused")) return "PC port is not accepting connections. Check that the companion is running on port 18765.";
+        if (error.contains("SocketTimeoutException") || error.contains("timed out")) return "PC connection timed out. Check that the tablet and PC are on the same LAN and port 18765 is reachable.";
+        return "PC connection failed: " + error;
     }
 }
