@@ -72,6 +72,7 @@ public final class PcCompanionServer {
 
     private void health(HttpExchange exchange) throws IOException {
         if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { send(exchange, 405, error("method_not_allowed").toString()); return; }
+        if (!authenticate(exchange, "")) return;
         send(exchange, 200, new JSONObject().put("ok", true).put("service", "nova-pc-companion").put("protocol", 1).put("verified", true).toString());
     }
 
@@ -349,7 +350,12 @@ public final class PcCompanionServer {
         try { ts = Long.parseLong(timestamp); } catch (NumberFormatException e) { send(exchange, 401, error("invalid_timestamp").toString()); return false; }
         if (Math.abs(Instant.now().getEpochSecond() - ts) > MAX_CLOCK_SKEW_SECONDS) { send(exchange, 401, error("stale_request").toString()); return false; }
         synchronized (usedNonces) {
-            usedNonces.removeIf(n -> { int split = n.lastIndexOf(':'); return split > 0 && Long.parseLong(n.substring(split + 1)) < ts - MAX_CLOCK_SKEW_SECONDS; });
+            usedNonces.removeIf(n -> {
+                int split = n.lastIndexOf(':');
+                if (split <= 0) return true;
+                try { return Long.parseLong(n.substring(split + 1)) < ts - MAX_CLOCK_SKEW_SECONDS; }
+                catch (NumberFormatException e) { return true; }
+            });
             if (!usedNonces.add(nonce + ":" + ts)) { send(exchange, 401, error("replayed_request").toString()); return false; }
         }
         String expected = hmac(timestamp + "\n" + nonce + "\n" + body);
@@ -397,7 +403,6 @@ public final class PcCompanionServer {
     private static JSONObject error(String code) { return new JSONObject().put("ok", false).put("error", code).put("retryable", false).put("verified", false); }
     private static void send(HttpExchange exchange, int code, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
         exchange.sendResponseHeaders(code, bytes.length);
         try (OutputStream out = exchange.getResponseBody()) { out.write(bytes); }
     }
