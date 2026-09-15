@@ -125,20 +125,11 @@ public final class NovaBrain {
             return false;
         }
         try {
-            // Verify the exact endpoint/token before persisting credentials. This prevents
-            // NOVA from restoring a dead or mistyped PC companion on the next launch.
-            NovaPcHttpClient candidate = new NovaPcHttpClient(url, token);
-            if (!candidate.isConnected()) {
-                Log.w(TAG, "PC CONFIGURATION REJECTED: " + candidate.getLastError());
-                return false;
-            }
             pcCredentials.setSecret(token);
             context.getSharedPreferences(PC_PREFS, Context.MODE_PRIVATE)
                     .edit().putString(PC_ENDPOINT, url).apply();
-            if (pcClient != null) pcClient.disconnect();
-            pcClient = candidate;
-            pcExecutor = new NovaPcToolExecutor(candidate);
-            return true;
+            rebuildPcClient();
+            return pcClient != null;
         } catch (Exception e) {
             Log.e(TAG, "PC CONFIGURATION ERROR", e);
             return false;
@@ -189,10 +180,250 @@ public final class NovaBrain {
         synchronized (this) {
             executor = pcExecutor;
         }
-        if (executor == null) return "pc_not_configured";
-        NovaToolInput input = NovaToolInput.from(type, value);
-        NovaToolResult result = executor.execute(input);
-        return result.toString();
+        if (executor == null) {
+            return "{\"ok\":false,\"verified\":false,\"error\":\"pc_not_configured\"}";
+        }
+        NovaToolResult result = executor.execute(type, value);
+        return result.toJson();
     }
 
-    // Remaining NovaBrain implementation is unchanged below this point.
+    public synchronized void think(String request) {
+        if (shutdown || request == null || request.trim().isEmpty()) return;
+        if (getEndpoint().isEmpty()) {
+            reply("My AI core isn't configured yet.");
+            return;
+        }
+        if (queue.size() >= MAX_QUEUE) {
+            reply("My task queue is full. Cancel or finish a task before adding another.");
+            return;
+        }
+        queue.offer(request.trim());
+        status(processing ? "BRAIN • GOAL QUEUED • " + queue.size() : "BRAIN • GOAL ACCEPTED");
+        processNextLocked();
+    }
+
+    public synchronized void cancelAllGoals() {
+        generation++;
+        queue.clear();
+        activeGoal = "";
+        processing = false;
+        status("BRAIN • TASKS CANCELLED");
+    }
+
+    public synchronized void cancelQueuedGoals() { cancelAllGoals(); }
+    public synchronized int queuedCount() { return queue.size(); }
+    public synchronized boolean isBusy() { return processing; }
+    public synchronized String activeGoal() { return activeGoal; }
+
+    private void processNextLocked() {
+        if (processing || shutdown) return;
+        activeGoal = queue.poll();
+        if (activeGoal == null) return;
+        processing = true;
+        memory.remember("user", activeGoal);
+        long started = System.currentTimeMillis();
+        askAi(activeGoal, 0, "", generation, 0, started);
+    }
+
+    private void askAi(final String goal, final int recoveryAttempt, final String feedback,
+                       final long token, final int turn, final long goalStarted) {
+        synchronized (this) {
+            if (shutdown || token != generation) return;
+        }
+        final boolean codingTask = NovaAgentPolicy.isCodingGoal(goal);
+        final int maxTurns = NovaAgentPolicy.maxAgentTurns(codingTask);
+        final int maxRecoveryAttempts = NovaAgentPolicy.maxRecoveryAttempts(codingTask);
+        if (NovaAgentPolicy.taskExpired(goalStarted, codingTask)) {
+            rememberAndReply(codingTask
+                    ? "I stopped safely because the coding task exceeded NOVA's execution time limit."
+                    : "I stopped safely because the task exceeded NOVA's execution time limit.");
+            finishGoal(token); return;
+        }
+        if (turn >= maxTurns) {
+            rememberAndReply(codingTask
+                    ? "I stopped safely after reaching the coding agent reasoning limit without verified completion."
+                    : "I stopped safely after reaching the agent reasoning limit.");
+            finishGoal(token); return;
+        }
+        status(recoveryAttempt > 0 ? "BRAIN • RECOVERING → REPLANNING" : turn == 0 ? "BRAIN • UNDERSTANDING → PLANNING" : "BRAIN • OBSERVING → NEXT STEP");
+        try {
+            JSONArray messages = new JSONArray();
+            messages.put(new JSONObject().put("role", "system").put("content", buildSystemPrompt(recoveryAttempt > 0, codingTask)));
+            StringBuilder contextText = new StringBuilder("Relevant saved NOVA memory:\n")
+                    .append(memory.searchFacts(goal, MAX_RELEVANT_FACTS))
+                    .append("\n\nCurrent UI state:\n")
+                    .append(NovaAgentPolicy.bounded(getUiSnapshot(), NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));
+            if (!feedback.isEmpty()) contextText.append("\n\nPrevious tool/execution evidence:\n").append(NovaAgentPolicy.bounded(feedback, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS));
+            messages.put(new JSONObject().put("role", "system").put("content", NovaAgentPolicy.bounded(contextText.toString(), NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)));
+            JSONArray history = memory.recent();
+            int start = Math.max(0, history.length() - NovaAgentPolicy.MAX_CONTEXT_ITEMS);
+            for (int i = start; i < history.length(); i++) {
+                JSONObject item = history.optJSONObject(i);
+                if (item != null) messages.put(item);
+            }
+            ai.chat(getEndpoint(), secureStore.getApiKey(), getModel(), messages, new NovaAiClient.Callback() {
+                @Override public void onResult(final String text) {
+                    agentExecutor.execute(() -> {
+                        synchronized (NovaBrain.this) { if (shutdown || token != generation) return; }
+                        NovaAgentPlanner.ExecutionResult r = planner.executeDetailed(text);
+                        synchronized (NovaBrain.this) { if (shutdown || token != generation) return; }
+                        if (!r.planValid) {
+                            if (recoveryAttempt < maxRecoveryAttempts) main.post(() -> askAi(goal, recoveryAttempt + 1, "Invalid plan: " + r.failedAction, token, turn + 1, goalStarted));
+                            else { rememberAndReply("I couldn't produce a safe executable plan after repeated recovery attempts."); finishGoal(token); }
+                            return;
+                        }
+                        if (!r.toolResults.isEmpty()) {
+                            main.post(() -> askAi(goal, 0, r.toolResults, token, turn + 1, goalStarted)); return;
+                        }
+                        if (r.completed) {
+                            if (prematureCompletion(goal, r.finalScreen)) {
+                                main.post(() -> askAi(goal, 0, "NOVA must not claim this goal is complete yet. The current UI does not provide evidence for the requested final state. Re-observe the UI and continue with the next necessary action. Current UI:\n" + NovaAgentPolicy.bounded(r.finalScreen, NovaAgentPolicy.MAX_TOOL_RESULT_CHARS), token, turn + 1, goalStarted));
+                                return;
+                            }
+                            if (!r.say.isEmpty()) rememberAndReply(r.say);
+                            finishGoal(token); return;
+                        }
+                        if (recoveryAttempt < maxRecoveryAttempts) {
+                            String failure = "Failed action: " + r.failedAction + "\nObserved UI after failure:\n" + r.finalScreen;
+                            main.post(() -> askAi(goal, recoveryAttempt + 1, failure, token, turn + 1, goalStarted));
+                        } else {
+                            rememberAndReply(r.failedAction.isEmpty() ? "I couldn't complete that task safely after repeated recovery attempts." : "I couldn't complete the task safely at: " + r.failedAction + " after repeated recovery attempts.");
+                            finishGoal(token);
+                        }
+                    });
+                }
+                @Override public void onError(String message) {
+                    synchronized (NovaBrain.this) { if (shutdown || token != generation) return; }
+                    rememberAndReply("My AI core is unavailable right now. " + message); finishGoal(token);
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "AI REQUEST PREPARATION ERROR", e);
+            rememberAndReply("I couldn't prepare the AI request."); finishGoal(token);
+        }
+    }
+
+    private String buildSystemPrompt(boolean recovery, boolean codingTask) {
+        StringBuilder p = new StringBuilder();
+        p.append("You are NOVA, a careful general-purpose Android + PC agent. Understand the user's goal, inspect the current state, choose the smallest correct next action, and return JSON only. ")
+                .append("Never claim success without evidence. A goal is NOT complete merely because an app or program was opened; every requested outcome must be observed and verified. ")
+                .append("Use at most ").append(NovaAgentPolicy.MAX_STEPS).append(" actions per reasoning turn and at most ")
+                .append(NovaAgentPolicy.maxAgentTurns(codingTask)).append(" reasoning turns per goal.\n");
+        p.append("Schema: {\"say\":\"short final response\",\"actions\":[{\"type\":\"tool\",\"value\":\"value\"}]}. If more work is needed, issue the next tool call instead of claiming completion. ")
+                .append("For multi-step UI goals, use ONE state-changing Android action per turn. After that action, rely on the fresh UI state supplied on the next reasoning turn. ")
+                .append("Do not assume a coordinate, button position, or previous screen remains valid after UI changes. Prefer semantic UI targeting with click_text when a visible label/content description identifies the intended control. ")
+                .append("Use click_index only when the current observed UI clearly provides a reliable numbered target. Never choose an action solely from memory when the current UI contradicts it. ")
+                .append("Keep web-dependent actions in separate turns so returned evidence can be inspected. For PC work, use pc_observe before consequential PC mutations when the current PC state matters, and never claim a PC operation succeeded unless its tool result has verified=true.\n");
+        if (codingTask) {
+            p.append("Coding-agent mode is active. Treat the task as an engineering workflow, not a single answer: INSPECT → PLAN → MODIFY → BUILD/TEST → DIAGNOSE → FIX → REBUILD/RETEST → VERIFY. ")
+                    .append("Use pc_search_text and pc_read_file to understand existing code before changing it. Use pc_write_file only for an intentional modification. After a write, read back or use the returned verification evidence. ")
+                    .append("Use pc_git_diff to review the actual change, then pc_build or pc_run to obtain real compiler/test evidence. If a build or test fails, inspect the error, make a targeted correction, rerun the failing verification, and continue until the requested result is verified or the task must stop safely. ")
+                    .append("Do not substitute a proposed patch, imagined build result, or explanation for actual tool evidence. Keep going across multiple reasoning turns when the task requires it.");
+        }
+        p.append("\nAvailable tools:\n").append(tools.promptSummary());
+        p.append("\nObservation rules: screen_observe/read_screen describe the current Android accessibility UI tree. Treat that observation as potentially time-sensitive and re-observe after UI mutations. ")
+                .append("PC tools operate only through the authenticated NOVA companion and its configured workspace/command policy. Use memory_search only for relevant saved facts. Use remember only for durable facts/preferences explicitly provided by the user. ")
+                .append("Use parallel only for independent informational tools; never parallelize Android UI mutations. Prefer reversible actions and stop for unavailable permissions/authentication.");
+        if (recovery) p.append("\nRecovery mode: diagnose the supplied failure/evidence, re-observe the current state, and choose a meaningfully different safe approach. Do not blindly repeat a failed action.");
+        return p.toString();
+    }
+
+    private boolean prematureCompletion(String goal, String screen) {
+        String g = goal == null ? "" : goal.trim().toLowerCase();
+        String s = screen == null ? "" : screen.trim().toLowerCase();
+        if (g.isEmpty() || s.isEmpty()) return false;
+        if (g.matches(".*\\b(search|find|look up)\\b.*")) {
+            String phrase = extractSearchPhrase(g);
+            if (!phrase.isEmpty()) {
+                String[] tokens = phrase.split("\\s+"); int meaningful = 0; int matched = 0;
+                for (String token : tokens) { String t = token.replaceAll("[^a-z0-9]", ""); if (t.length() < 4) continue; meaningful++; if (s.contains(t)) matched++; }
+                if (meaningful > 1 && matched < meaningful) return true;
+                if (meaningful == 1 && matched == 0) return true;
+            }
+        }
+        return false;
+    }
+
+    private String extractSearchPhrase(String goal) {
+        String g = goal == null ? "" : goal.toLowerCase().replaceAll("[?.!]", " ");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\b(?:search(?: for)?|find|look up)\\s+(.+?)(?:\\s+(?:on|in|using)\\s+.+)?$").matcher(g);
+        return m.find() ? m.group(1).trim() : "";
+    }
+
+    private String executeIntelligenceTool(String type, String value) {
+        try {
+            if ("web_search".equals(type)) return ok(web.search(value, 5));
+            if ("web_fetch".equals(type)) return ok(web.fetch(value));
+            if ("web_research".equals(type)) return ok(web.search(value, 6));
+            if ("screen_observe".equals(type) || "read_screen".equals(type)) return "{\"ok\":true,\"text\":\"" + escape(NovaAgentPolicy.bounded(getUiSnapshot(), NovaAgentPolicy.MAX_TOOL_RESULT_CHARS)) + "\"}";
+            if ("memory_search".equals(type)) return "{\"ok\":true,\"facts\":" + memory.searchFacts(value, 8) + "}";
+            if ("remember".equals(type)) {
+                JSONObject o = new JSONObject(value); String k = o.optString("key", "").trim(); String v = o.optString("value", "").trim();
+                if (k.isEmpty() || v.isEmpty()) return "{\"ok\":false,\"error\":\"key_and_value_required\"}";
+                memory.rememberFact(k, v); return "{\"ok\":true,\"saved\":true}";
+            }
+            return "{\"ok\":false,\"error\":\"unknown_intelligence_tool\"}";
+        } catch (Exception e) { return "{\"ok\":false,\"error\":\"" + escape(e.getMessage() == null ? "tool_failed" : e.getMessage()) + "\"}"; }
+    }
+
+    private String executeParallelTools(String value) {
+        try {
+            JSONArray steps = new JSONArray(value);
+            if (steps.length() == 0 || steps.length() > NovaAgentPolicy.MAX_STEPS) return "{\"ok\":false,\"error\":\"parallel_step_limit\"}";
+            for (int i = 0; i < steps.length(); i++) {
+                JSONObject s = steps.optJSONObject(i); if (s == null) return "{\"ok\":false,\"error\":\"parallel_invalid_step\"}";
+                String type = s.optString("type", "").trim().toLowerCase(); String validation = NovaActionSchema.validate(s);
+                if (!NovaActionSchema.isInformational(type) || !NovaActionSchema.canRunInParallel(type) || !validation.isEmpty()) return "{\"ok\":false,\"error\":\"parallel_only_allows_valid_informational_tools\",\"detail\":\"" + escape(validation.isEmpty() ? type : validation) + "\"}";
+            }
+            JSONArray out = orchestrator.executeParallel(toOrchestratorSteps(steps), (tool, input) -> executeToolJson(tool, input));
+            return "{\"ok\":true,\"parallel_results\":" + out + "}";
+        } catch (Exception e) { return "{\"ok\":false,\"error\":\"parallel_failed\"}"; }
+    }
+
+    private JSONArray toOrchestratorSteps(JSONArray source) throws Exception {
+        JSONArray out = new JSONArray();
+        for (int i = 0; i < source.length(); i++) {
+            JSONObject s = source.optJSONObject(i);
+            if (s != null) out.put(new JSONObject().put("id", s.optString("id", String.valueOf(i))).put("tool", s.optString("type", "")).put("input", new JSONObject().put("value", s.optString("value", ""))));
+        }
+        return out;
+    }
+
+    private JSONObject executeToolJson(String tool, JSONObject input) {
+        try {
+            if (isPcTool(tool)) return new JSONObject(executePcTool(tool, input == null ? "" : input.optString("value", "")));
+            return new JSONObject(executeIntelligenceTool(tool, input == null ? "" : input.optString("value", "")));
+        } catch (Exception e) {
+            try { return new JSONObject().put("ok", false).put("error", "tool_failed"); } catch (Exception ignored) { return new JSONObject(); }
+        }
+    }
+
+    private String ok(String payload) {
+        try { JSONObject o = new JSONObject(payload); o.put("ok", true); return o.toString(); }
+        catch (Exception e) { return "{\"ok\":true,\"data\":\"" + escape(payload) + "\"}"; }
+    }
+
+    private String escape(String s) { return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", " ").replace("\n", " "); }
+
+    private void finishGoal(long token) {
+        synchronized (this) {
+            if (shutdown || token != generation) return;
+            processing = false; activeGoal = "";
+            if (!queue.isEmpty()) { status("BRAIN • NEXT GOAL"); processNextLocked(); }
+            else status("BRAIN • IDLE");
+        }
+    }
+
+    private String getEndpoint() { return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ENDPOINT, "").trim(); }
+    private String getModel() { return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(MODEL, "gpt-4o-mini").trim(); }
+    private String getUiSnapshot() { GestureAccessibilityService s = GestureAccessibilityService.getInstance(); return s == null ? "Accessibility service is not connected." : s.getUiSnapshot(); }
+    private void rememberAndReply(String text) { String value = text == null ? "" : text.trim(); if (value.isEmpty()) return; memory.remember("assistant", value); reply(value); }
+    private void status(String text) { if (listener != null) main.post(() -> listener.onStatus(text)); }
+    private void reply(String text) { if (listener != null) main.post(() -> listener.onReply(text)); }
+
+    public void shutdown() {
+        synchronized (this) { shutdown = true; generation++; queue.clear(); activeGoal = ""; processing = false; }
+        if (pcClient != null) pcClient.disconnect();
+        orchestrator.shutdown(); agentExecutor.shutdownNow();
+    }
+}
