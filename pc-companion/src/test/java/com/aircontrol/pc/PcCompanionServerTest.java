@@ -39,12 +39,14 @@ class PcCompanionServerTest {
 
     @AfterEach void stopServer() { if (server != null) server.stop(); }
 
-    @Test void healthIsAvailableWithoutAuthentication() throws Exception {
-        HttpResponse<String> r = get("/v1/health", false, null);
+    @Test void healthRequiresAuthentication() throws Exception {
+        assertEquals(401, get("/v1/health", false, null).statusCode());
+        HttpResponse<String> r = get("/v1/health", true, null);
         assertEquals(200, r.statusCode());
         JSONObject body = new JSONObject(r.body());
         assertTrue(body.getBoolean("ok"));
         assertTrue(body.getBoolean("verified"));
+        assertEquals(1, body.getInt("protocol"));
     }
 
     @Test void observeRequiresValidAuthentication() throws Exception {
