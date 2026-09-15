@@ -20,6 +20,7 @@ public final class NovaPcHttpClient implements NovaPcAgent {
     private final String baseUrl;
     private final String secret;
     private volatile boolean connected;
+    private volatile String lastError = "";
 
     public NovaPcHttpClient(String baseUrl, String secret) {
         this.baseUrl = normalizeBaseUrl(baseUrl);
@@ -29,6 +30,7 @@ public final class NovaPcHttpClient implements NovaPcAgent {
     @Override public boolean isConnected() {
         if (baseUrl.isEmpty() || secret.length() < 32) {
             connected = false;
+            lastError = "pc_not_configured";
             return false;
         }
         try {
@@ -36,17 +38,29 @@ public final class NovaPcHttpClient implements NovaPcAgent {
             connected = response.optBoolean("ok", false)
                     && response.optInt("protocol", 0) == 1
                     && response.optBoolean("verified", false);
+            if (connected) {
+                lastError = "";
+            } else {
+                lastError = response.optString("error", "pc_health_failed");
+            }
             return connected;
         } catch (Exception e) {
             connected = false;
+            lastError = compactError(e);
             return false;
         }
+    }
+
+    /** Returns the last pairing/connection failure in a UI-safe compact form. */
+    public String getLastError() {
+        return lastError;
     }
 
     @Override public NovaToolResult execute(NovaToolInput input) {
         if (input == null) return NovaToolResult.failure("", "invalid_input", "Invalid PC tool input", false);
         if (baseUrl.isEmpty() || secret.length() < 32) {
             connected = false;
+            lastError = "pc_not_configured";
             return NovaToolResult.failure(input.toolType, "pc_not_configured", "PC companion is not configured", false);
         }
         try {
@@ -57,6 +71,7 @@ public final class NovaPcHttpClient implements NovaPcAgent {
             JSONObject response = request("/v1/execute", "POST", request.toString());
             boolean ok = response.optBoolean("ok", false);
             connected = ok;
+            lastError = ok ? "" : response.optString("error", "pc_tool_failed");
             if (ok) {
                 return NovaToolResult.success(input.toolType, response.toString(), response.optBoolean("verified", false));
             }
@@ -64,6 +79,7 @@ public final class NovaPcHttpClient implements NovaPcAgent {
             return NovaToolResult.failure(input.toolType, error, response.toString(), response.optBoolean("retryable", false));
         } catch (Exception e) {
             connected = false;
+            lastError = compactError(e);
             return NovaToolResult.failure(input.toolType, "pc_request_failed", compactError(e), true);
         }
     }
@@ -71,15 +87,18 @@ public final class NovaPcHttpClient implements NovaPcAgent {
     @Override public String observe() {
         if (baseUrl.isEmpty() || secret.length() < 32) {
             connected = false;
+            lastError = "pc_not_configured";
             return "pc_not_configured";
         }
         try {
             JSONObject response = request("/v1/observe", "GET", "");
             connected = response.optBoolean("ok", false) && response.optBoolean("verified", false);
+            lastError = connected ? "" : response.optString("error", "pc_observe_failed");
             return response.toString();
         } catch (Exception e) {
             connected = false;
-            return "pc_observe_failed:" + compactError(e);
+            lastError = compactError(e);
+            return "pc_observe_failed:" + lastError;
         }
     }
 
