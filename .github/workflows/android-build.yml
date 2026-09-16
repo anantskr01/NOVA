@@ -1,25 +1,37 @@
-name: NOVA Android Build
+name: NOVA Android + PC Build
 
 on:
   push:
     branches:
-      - feature/nova-agent-core-v1
-  pull_request:
-    branches:
       - main
+      - nova-v1-foundation-2026-09-14
+      - feature/**
+      - phase-2-universal-tools
+      - consolidate/**
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up JDK
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
+
       - name: Make Gradle executable
         run: chmod +x gradlew
-      - name: Assemble debug APK
-        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Build PC companion
+        run: ./gradlew :pc-companion:build --no-daemon
+
+      - name: Build Android debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
