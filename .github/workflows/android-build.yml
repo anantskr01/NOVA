@@ -3,10 +3,15 @@ name: NOVA Android Build
 on:
   push:
     branches:
-      - feature/nova-agent-core-v1
+      - main
+      - feature/nova-ai-provider-layer
   pull_request:
     branches:
       - main
+
+concurrency:
+  group: nova-android-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
