@@ -63,7 +63,9 @@ public final class NovaTaskManager {
     };
 
     public NovaTaskManager(NovaBrain brain) {
+        if (brain == null) throw new IllegalArgumentException("brain == null");
         this.brain = brain;
+        brain.setGoalListener(this::onBrainGoalFinished);
         main.post(pump);
     }
 
@@ -72,8 +74,9 @@ public final class NovaTaskManager {
         pruneFinished();
         if (tasks.size() >= MAX_TRACKED) return "";
         int p = Math.max(0, Math.min(priority, 10));
-        String id = "NOVA-T" + String.format("%04d", NEXT_ID.getAndIncrement());
-        Task task = new Task(id, goal.trim(), p, NEXT_ID.get());
+        long sequence = NEXT_ID.getAndIncrement();
+        String id = "NOVA-T" + String.format("%04d", sequence);
+        Task task = new Task(id, goal.trim(), p, sequence);
         tasks.put(id, task);
         queue.offer(task);
         pumpLocked();
@@ -89,14 +92,8 @@ public final class NovaTaskManager {
                     active.finishedAt = System.currentTimeMillis();
                     active = null;
                     brain.cancelAllGoals();
-                } else {
-                    return;
-                }
-            } else {
-                // NovaBrain reports terminal truth through onBrainGoalFinished().
-                // If the callback has not arrived yet, keep the task running rather than guessing.
-                return;
-            }
+                } else return;
+            } else return;
         }
         if (brain.isBusy()) return;
         Task next = queue.poll();
