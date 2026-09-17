@@ -30,6 +30,7 @@ public final class NovaGeminiAiProvider implements NovaAiProvider {
 
     @Override
     public void chat(String endpoint, String apiKey, String model, JSONArray messages, Callback callback) {
+        if (callback == null) return;
         executor.execute(() -> {
             final long started = System.currentTimeMillis();
             HttpURLConnection connection = null;
@@ -63,21 +64,17 @@ public final class NovaGeminiAiProvider implements NovaAiProvider {
                         String role = message.optString("role", "user");
                         String content = message.optString("content", "");
                         if (content.isEmpty()) continue;
-
                         if ("system".equals(role)) {
                             systemParts.put(new JSONObject().put("text", content));
                             continue;
                         }
-
                         JSONObject item = new JSONObject();
                         item.put("role", "assistant".equals(role) ? "model" : "user");
                         item.put("parts", new JSONArray().put(new JSONObject().put("text", content)));
                         contents.put(item);
                     }
                 }
-                if (systemParts.length() > 0) {
-                    body.put("systemInstruction", new JSONObject().put("parts", systemParts));
-                }
+                if (systemParts.length() > 0) body.put("systemInstruction", new JSONObject().put("parts", systemParts));
                 body.put("contents", contents);
 
                 byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
