@@ -23,14 +23,15 @@ public final class NovaSkillRegistry {
     public interface Callback { void reply(String text); void status(String text); }
     private final Context context;
     private final Callback callback;
+    private final NovaTaskManager taskManager;
     private final List<NovaSkill> extensions = new ArrayList<>();
 
-    public NovaSkillRegistry(Context context, Callback callback) {
+    public NovaSkillRegistry(Context context, Callback callback, NovaTaskManager taskManager) {
         this.context = context.getApplicationContext();
         this.callback = callback;
+        this.taskManager = taskManager;
     }
 
-    /** Registers an isolated skill extension. Existing built-in skills remain independent. */
     public void register(NovaSkill skill) {
         if (skill != null) extensions.add(skill);
     }
@@ -57,9 +58,7 @@ public final class NovaSkillRegistry {
                 callback.status("SKILL FAILED • " + skill.id());
             }
         }
-        if (isCodingGoal(c)) {
-            return startCodingAgent(command);
-        }
+        if (isCodingGoal(c)) return startCodingAgent(command);
         if (c.equals("what is my battery") || c.contains("battery level")) {
             android.os.BatteryManager bm = (android.os.BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
             int level = bm == null ? -1 : bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY);
@@ -134,20 +133,40 @@ public final class NovaSkillRegistry {
             callback.reply("The PC coding agent is not connected. Open PC agent setup first.");
             return true;
         }
+        if (taskManager == null) {
+            callback.reply("The NOVA task manager is not ready.");
+            return true;
+        }
         android.content.SharedPreferences prefs = context.getSharedPreferences(NovaAiProviderRouter.PREFS, Context.MODE_PRIVATE);
         String endpoint = prefs.getString("endpoint", "local://nova");
         String model = prefs.getString("model", "gemini-3.8-flash");
         String apiKey = new NovaSecureStore(context).getApiKey();
-        callback.status("CODING AGENT • STARTING");
-        NovaCodingAgent agent = new NovaCodingAgent(new NovaAiProviderRouter(context), endpoint, apiKey, model, pc);
-        agent.start(goal, new NovaCodingAgent.Listener() {
-            @Override public void onStatus(String text) { callback.status(text); }
-            @Override public void onFinished(boolean success, String summary) {
-                callback.status(success ? "CODING AGENT • VERIFIED" : "CODING AGENT • FAILED");
-                callback.reply(summary);
-                agent.shutdown();
+        final NovaCodingAgent[] holder = new NovaCodingAgent[1];
+        String taskId = taskManager.submitExternal(goal, NovaTaskManager.PRIORITY_NORMAL, new NovaTaskManager.ExternalTask() {
+            @Override public void start(NovaTaskManager.ExternalListener taskListener) {
+                callback.status("CODING AGENT • STARTING");
+                NovaCodingAgent agent = new NovaCodingAgent(new NovaAiProviderRouter(context), endpoint, apiKey, model, pc);
+                holder[0] = agent;
+                agent.start(goal, new NovaCodingAgent.Listener() {
+                    @Override public void onStatus(String text) { taskListener.onStatus(text); callback.status(text); }
+                    @Override public void onFinished(boolean success, String summary) {
+                        callback.status(success ? "CODING AGENT • VERIFIED" : "CODING AGENT • FAILED");
+                        callback.reply(summary);
+                        taskListener.onFinished(success, summary);
+                        agent.shutdown();
+                        holder[0] = null;
+                    }
+                });
+            }
+            @Override public void cancel() {
+                NovaCodingAgent agent = holder[0];
+                if (agent != null) agent.shutdown();
+                holder[0] = null;
+                callback.status("CODING AGENT • CANCELLED");
             }
         });
+        if (taskId.isEmpty()) callback.reply("I couldn't add the coding task to NOVA's task manager.");
+        else callback.status("TASK " + taskId + " • CODING • ACCEPTED");
         return true;
     }
 
