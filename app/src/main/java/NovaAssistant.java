@@ -53,7 +53,6 @@ public final class NovaAssistant {
             @Override public void onReply(String text) { NovaAssistant.this.say(text); }
         });
         taskManager = new NovaTaskManager(brain);
-        brain.setGoalListener((goal, outcome) -> taskManager.onBrainGoalFinished(goal, outcome));
         conversation = new NovaConversationService(this.context, memory);
         skills = new NovaSkillRegistry(this.context, new NovaSkillRegistry.Callback() {
             @Override public void reply(String text) { NovaAssistant.this.say(text); }
