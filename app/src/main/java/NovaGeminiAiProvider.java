@@ -55,6 +55,7 @@ public final class NovaGeminiAiProvider implements NovaAiProvider {
 
                 JSONObject body = new JSONObject();
                 JSONArray contents = new JSONArray();
+                JSONArray systemParts = new JSONArray();
                 if (messages != null) {
                     for (int i = 0; i < messages.length(); i++) {
                         JSONObject message = messages.optJSONObject(i);
@@ -62,14 +63,22 @@ public final class NovaGeminiAiProvider implements NovaAiProvider {
                         String role = message.optString("role", "user");
                         String content = message.optString("content", "");
                         if (content.isEmpty()) continue;
+
+                        if ("system".equals(role)) {
+                            systemParts.put(new JSONObject().put("text", content));
+                            continue;
+                        }
+
                         JSONObject item = new JSONObject();
-                        item.put("role", "system".equals(role) ? "user" : ("assistant".equals(role) ? "model" : "user"));
+                        item.put("role", "assistant".equals(role) ? "model" : "user");
                         item.put("parts", new JSONArray().put(new JSONObject().put("text", content)));
                         contents.put(item);
                     }
                 }
+                if (systemParts.length() > 0) {
+                    body.put("systemInstruction", new JSONObject().put("parts", systemParts));
+                }
                 body.put("contents", contents);
-                body.put("generationConfig", new JSONObject().put("temperature", 0.2));
 
                 byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
                 connection.setFixedLengthStreamingMode(bytes.length);
