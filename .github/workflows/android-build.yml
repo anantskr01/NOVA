@@ -30,8 +30,14 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x gradlew
 
-      - name: Build PC companion
-        run: ./gradlew :pc-companion:build --no-daemon
+      - name: Build PC companion when present
+        shell: bash
+        run: |
+          if [ -d pc-companion ]; then
+            ./gradlew :pc-companion:build --no-daemon
+          else
+            echo 'No pc-companion module on this branch; skipping.'
+          fi
 
       - name: Build Android debug APK
         run: ./gradlew :app:assembleDebug --no-daemon
