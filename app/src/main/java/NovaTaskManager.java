@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Priority-aware front-end scheduler. It feeds exactly one goal at a time into NovaBrain. */
+/** Priority-aware front-end scheduler for Brain goals and managed external agents. */
 public final class NovaTaskManager {
     public static final String QUEUED = "queued";
     public static final String RUNNING = "running";
@@ -26,18 +26,29 @@ public final class NovaTaskManager {
     private static final int MAX_TRACKED = 32;
     private static final AtomicLong NEXT_ID = new AtomicLong(1);
 
+    public interface ExternalTask {
+        void start(ExternalListener listener);
+        void cancel();
+    }
+
+    public interface ExternalListener {
+        void onStatus(String text);
+        void onFinished(boolean success, String summary);
+    }
+
     public static final class Task {
         private final String id;
         private final String goal;
         private final int priority;
         private final long sequence;
         private final long createdAt;
+        private final ExternalTask external;
         private long startedAt;
         private long finishedAt;
         private String status = QUEUED;
-        private Task(String id, String goal, int priority, long sequence) {
+        private Task(String id, String goal, int priority, long sequence, ExternalTask external) {
             this.id = id; this.goal = goal; this.priority = priority; this.sequence = sequence;
-            this.createdAt = System.currentTimeMillis();
+            this.createdAt = System.currentTimeMillis(); this.external = external;
         }
         public String id() { return id; }
         public String goal() { return goal; }
@@ -70,13 +81,22 @@ public final class NovaTaskManager {
     }
 
     public synchronized String submit(String goal, int priority) {
+        return submitInternal(goal, priority, null);
+    }
+
+    public synchronized String submitExternal(String goal, int priority, ExternalTask external) {
+        if (external == null) return "";
+        return submitInternal(goal, priority, external);
+    }
+
+    private String submitInternal(String goal, int priority, ExternalTask external) {
         if (shutdown || goal == null || goal.trim().isEmpty()) return "";
         pruneFinished();
         if (tasks.size() >= MAX_TRACKED) return "";
         int p = Math.max(0, Math.min(priority, 10));
         long sequence = NEXT_ID.getAndIncrement();
         String id = "NOVA-T" + String.format("%04d", sequence);
-        Task task = new Task(id, goal.trim(), p, sequence);
+        Task task = new Task(id, goal.trim(), p, sequence, external);
         tasks.put(id, task);
         queue.offer(task);
         pumpLocked();
@@ -86,14 +106,24 @@ public final class NovaTaskManager {
     private void pumpLocked() {
         if (shutdown || brain == null) return;
         if (active != null) {
-            if (brain.isBusy()) {
-                if (active.startedAt > 0 && System.currentTimeMillis() - active.startedAt > NovaAgentPolicy.MAX_TASK_MILLIS + 5_000L) {
-                    active.status = FAILED;
-                    active.finishedAt = System.currentTimeMillis();
-                    active = null;
+            if (active.startedAt > 0 && System.currentTimeMillis() - active.startedAt > NovaAgentPolicy.MAX_TASK_MILLIS + 5_000L) {
+                Task timedOut = active;
+                timedOut.status = FAILED;
+                timedOut.finishedAt = System.currentTimeMillis();
+                active = null;
+                if (timedOut.external != null) {
+                    try { timedOut.external.cancel(); } catch (Exception ignored) { }
+                } else {
                     brain.cancelAllGoals();
-                } else return;
-            } else return;
+                }
+                status("TASK " + timedOut.id + " • TIMEOUT");
+            } else if (active.external != null) {
+                return;
+            } else if (brain.isBusy()) {
+                return;
+            } else {
+                return;
+            }
         }
         if (brain.isBusy()) return;
         Task next = queue.poll();
@@ -101,12 +131,39 @@ public final class NovaTaskManager {
         active = next;
         next.status = RUNNING;
         next.startedAt = System.currentTimeMillis();
-        brain.think(next.goal);
+        if (next.external != null) {
+            try {
+                next.external.start(new ExternalListener() {
+                    @Override public void onStatus(String text) {
+                        if (text != null && !text.trim().isEmpty()) status("TASK " + next.id + " • " + text);
+                    }
+                    @Override public void onFinished(boolean success, String summary) {
+                        main.post(() -> onExternalTaskFinished(next, success, summary));
+                    }
+                });
+            } catch (Exception e) {
+                onExternalTaskFinished(next, false, "External task failed to start: " + e.getMessage());
+            }
+        } else {
+            brain.think(next.goal);
+        }
+    }
+
+    private void onExternalTaskFinished(Task task, boolean success, String summary) {
+        synchronized (this) {
+            if (shutdown || active != task || !RUNNING.equals(task.status)) return;
+            task.status = success ? COMPLETED : FAILED;
+            task.finishedAt = System.currentTimeMillis();
+            active = null;
+            status("TASK " + task.id + " • " + (success ? "COMPLETED" : "FAILED"));
+            if (summary != null && !summary.trim().isEmpty()) status(summary.trim());
+            pumpLocked();
+        }
     }
 
     /** Receives the authoritative terminal outcome from NovaBrain for the current task. */
     public synchronized void onBrainGoalFinished(String goal, NovaBrain.GoalOutcome outcome) {
-        if (shutdown || active == null || goal == null || !goal.equals(active.goal)) return;
+        if (shutdown || active == null || active.external != null || goal == null || !goal.equals(active.goal)) return;
         if (outcome == NovaBrain.GoalOutcome.SUCCESS) active.status = COMPLETED;
         else if (outcome == NovaBrain.GoalOutcome.FAILED) active.status = FAILED;
         else active.status = CANCELLED;
@@ -122,7 +179,11 @@ public final class NovaTaskManager {
             task.status = CANCELLED;
             task.finishedAt = System.currentTimeMillis();
             active = null;
-            brain.cancelAllGoals();
+            if (task.external != null) {
+                try { task.external.cancel(); } catch (Exception ignored) { }
+            } else {
+                brain.cancelAllGoals();
+            }
             pumpLocked();
             return true;
         }
@@ -156,7 +217,11 @@ public final class NovaTaskManager {
             }
         }
         queue.clear();
+        Task running = active;
         active = null;
+        if (running != null && running.external != null) {
+            try { running.external.cancel(); } catch (Exception ignored) { }
+        }
         if (brain != null) brain.cancelAllGoals();
         return count;
     }
@@ -187,9 +252,13 @@ public final class NovaTaskManager {
         shutdown = true;
         main.removeCallbacks(pump);
         queue.clear();
-        if (active != null && RUNNING.equals(active.status)) {
-            active.status = CANCELLED;
-            active.finishedAt = System.currentTimeMillis();
+        Task running = active;
+        if (running != null && RUNNING.equals(running.status)) {
+            running.status = CANCELLED;
+            running.finishedAt = System.currentTimeMillis();
+            if (running.external != null) {
+                try { running.external.cancel(); } catch (Exception ignored) { }
+            }
         }
         active = null;
         if (brain != null) brain.cancelAllGoals();
@@ -203,4 +272,5 @@ public final class NovaTaskManager {
             if (COMPLETED.equals(task.status) || FAILED.equals(task.status) || CANCELLED.equals(task.status)) it.remove();
         }
     }
+    private void status(String text) { System.out.println("NOVA • " + text); }
 }
