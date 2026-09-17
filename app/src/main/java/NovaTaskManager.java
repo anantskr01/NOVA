@@ -87,19 +87,15 @@ public final class NovaTaskManager {
                 if (active.startedAt > 0 && System.currentTimeMillis() - active.startedAt > NovaAgentPolicy.MAX_TASK_MILLIS + 5_000L) {
                     active.status = FAILED;
                     active.finishedAt = System.currentTimeMillis();
-                    brain.cancelAllGoals();
                     active = null;
+                    brain.cancelAllGoals();
                 } else {
                     return;
                 }
             } else {
-                // NovaBrain owns execution truth; reaching idle means the goal has terminated.
-                // Timeout is the one terminal condition we can independently prove here.
-                if (RUNNING.equals(active.status)) {
-                    active.status = COMPLETED;
-                    active.finishedAt = System.currentTimeMillis();
-                }
-                active = null;
+                // NovaBrain reports terminal truth through onBrainGoalFinished().
+                // If the callback has not arrived yet, keep the task running rather than guessing.
+                return;
             }
         }
         if (brain.isBusy()) return;
@@ -109,6 +105,17 @@ public final class NovaTaskManager {
         next.status = RUNNING;
         next.startedAt = System.currentTimeMillis();
         brain.think(next.goal);
+    }
+
+    /** Receives the authoritative terminal outcome from NovaBrain for the current task. */
+    public synchronized void onBrainGoalFinished(String goal, NovaBrain.GoalOutcome outcome) {
+        if (shutdown || active == null || goal == null || !goal.equals(active.goal)) return;
+        if (outcome == NovaBrain.GoalOutcome.SUCCESS) active.status = COMPLETED;
+        else if (outcome == NovaBrain.GoalOutcome.FAILED) active.status = FAILED;
+        else active.status = CANCELLED;
+        active.finishedAt = System.currentTimeMillis();
+        active = null;
+        pumpLocked();
     }
 
     public synchronized boolean cancel(String id) {
@@ -166,10 +173,7 @@ public final class NovaTaskManager {
     public synchronized String statusText() {
         if (tasks.isEmpty()) return "NOVA has no tracked tasks.";
         StringBuilder out = new StringBuilder("NOVA TASKS\n");
-        for (Task task : tasks.values()) {
-            out.append(task.id).append(" • ").append(task.status.toUpperCase()).append(" • P")
-                    .append(task.priority).append(" • ").append(task.goal).append('\n');
-        }
+        for (Task task : tasks.values()) out.append(task.id).append(" • ").append(task.status.toUpperCase()).append(" • P").append(task.priority).append(" • ").append(task.goal).append('\n');
         return out.toString().trim();
     }
     public synchronized JSONArray snapshot() {
@@ -177,8 +181,7 @@ public final class NovaTaskManager {
         for (Task task : tasks.values()) {
             try {
                 out.put(new JSONObject().put("id", task.id).put("goal", task.goal).put("priority", task.priority)
-                        .put("status", task.status).put("createdAt", task.createdAt).put("startedAt", task.startedAt)
-                        .put("finishedAt", task.finishedAt));
+                        .put("status", task.status).put("createdAt", task.createdAt).put("startedAt", task.startedAt).put("finishedAt", task.finishedAt));
             } catch (Exception ignored) { }
         }
         return out;
