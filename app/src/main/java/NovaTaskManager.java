@@ -20,7 +20,6 @@ public final class NovaTaskManager {
     public static final String COMPLETED = "completed";
     public static final String FAILED = "failed";
     public static final String CANCELLED = "cancelled";
-
     public static final int PRIORITY_HIGH = 8;
     public static final int PRIORITY_NORMAL = 5;
     public static final int PRIORITY_LOW = 2;
@@ -36,12 +35,8 @@ public final class NovaTaskManager {
         private long startedAt;
         private long finishedAt;
         private String status = QUEUED;
-
         private Task(String id, String goal, int priority, long sequence) {
-            this.id = id;
-            this.goal = goal;
-            this.priority = priority;
-            this.sequence = sequence;
+            this.id = id; this.goal = goal; this.priority = priority; this.sequence = sequence;
             this.createdAt = System.currentTimeMillis();
         }
         public String id() { return id; }
@@ -53,8 +48,7 @@ public final class NovaTaskManager {
     private final NovaBrain brain;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final PriorityQueue<Task> queue = new PriorityQueue<>(
-            Comparator.<Task>comparingInt(Task::priority).reversed()
-                    .thenComparingLong(t -> t.sequence));
+            Comparator.<Task>comparingInt(Task::priority).reversed().thenComparingLong(t -> t.sequence));
     private final LinkedHashMap<String, Task> tasks = new LinkedHashMap<>();
     private Task active;
     private boolean shutdown;
@@ -63,7 +57,7 @@ public final class NovaTaskManager {
             synchronized (NovaTaskManager.this) {
                 if (shutdown) return;
                 pumpLocked();
-                main.postDelayed(this, 350L);
+                if (!shutdown) main.postDelayed(this, 350L);
             }
         }
     };
@@ -89,12 +83,24 @@ public final class NovaTaskManager {
     private void pumpLocked() {
         if (shutdown || brain == null) return;
         if (active != null) {
-            if (brain.isBusy()) return;
-            if (RUNNING.equals(active.status)) {
-                active.status = COMPLETED;
-                active.finishedAt = System.currentTimeMillis();
+            if (brain.isBusy()) {
+                if (active.startedAt > 0 && System.currentTimeMillis() - active.startedAt > NovaAgentPolicy.MAX_TASK_MILLIS + 5_000L) {
+                    active.status = FAILED;
+                    active.finishedAt = System.currentTimeMillis();
+                    brain.cancelAllGoals();
+                    active = null;
+                } else {
+                    return;
+                }
+            } else {
+                // NovaBrain owns execution truth; reaching idle means the goal has terminated.
+                // Timeout is the one terminal condition we can independently prove here.
+                if (RUNNING.equals(active.status)) {
+                    active.status = COMPLETED;
+                    active.finishedAt = System.currentTimeMillis();
+                }
+                active = null;
             }
-            active = null;
         }
         if (brain.isBusy()) return;
         Task next = queue.poll();
@@ -107,8 +113,7 @@ public final class NovaTaskManager {
 
     public synchronized boolean cancel(String id) {
         Task task = tasks.get(normalizeId(id));
-        if (task == null || COMPLETED.equals(task.status) || FAILED.equals(task.status)
-                || CANCELLED.equals(task.status)) return false;
+        if (task == null || COMPLETED.equals(task.status) || FAILED.equals(task.status) || CANCELLED.equals(task.status)) return false;
         if (task == active) {
             task.status = CANCELLED;
             task.finishedAt = System.currentTimeMillis();
@@ -140,8 +145,7 @@ public final class NovaTaskManager {
         int count = 0;
         long now = System.currentTimeMillis();
         for (Task task : tasks.values()) {
-            if (!COMPLETED.equals(task.status) && !FAILED.equals(task.status)
-                    && !CANCELLED.equals(task.status)) {
+            if (!COMPLETED.equals(task.status) && !FAILED.equals(task.status) && !CANCELLED.equals(task.status)) {
                 task.status = CANCELLED;
                 task.finishedAt = now;
                 count++;
@@ -155,45 +159,42 @@ public final class NovaTaskManager {
 
     public synchronized Task active() { return active; }
     public synchronized int queuedCount() { return queue.size(); }
-
     public synchronized String activeText() {
         if (active == null || !RUNNING.equals(active.status)) return "NOVA is idle.";
         return "NOVA is running " + active.id + ": " + active.goal;
     }
-
     public synchronized String statusText() {
         if (tasks.isEmpty()) return "NOVA has no tracked tasks.";
         StringBuilder out = new StringBuilder("NOVA TASKS\n");
         for (Task task : tasks.values()) {
-            out.append(task.id).append(" • ").append(task.status.toUpperCase())
-                    .append(" • P").append(task.priority).append(" • ")
-                    .append(task.goal).append('\n');
+            out.append(task.id).append(" • ").append(task.status.toUpperCase()).append(" • P")
+                    .append(task.priority).append(" • ").append(task.goal).append('\n');
         }
         return out.toString().trim();
     }
-
     public synchronized JSONArray snapshot() {
         JSONArray out = new JSONArray();
         for (Task task : tasks.values()) {
             try {
-                out.put(new JSONObject().put("id", task.id).put("goal", task.goal)
-                        .put("priority", task.priority).put("status", task.status)
-                        .put("createdAt", task.createdAt).put("startedAt", task.startedAt)
+                out.put(new JSONObject().put("id", task.id).put("goal", task.goal).put("priority", task.priority)
+                        .put("status", task.status).put("createdAt", task.createdAt).put("startedAt", task.startedAt)
                         .put("finishedAt", task.finishedAt));
             } catch (Exception ignored) { }
         }
         return out;
     }
-
     public synchronized void shutdown() {
         shutdown = true;
         main.removeCallbacks(pump);
         queue.clear();
+        if (active != null && RUNNING.equals(active.status)) {
+            active.status = CANCELLED;
+            active.finishedAt = System.currentTimeMillis();
+        }
         active = null;
+        if (brain != null) brain.cancelAllGoals();
     }
-
     private String normalizeId(String id) { return id == null ? "" : id.trim().toUpperCase(); }
-
     private void pruneFinished() {
         if (tasks.size() < MAX_TRACKED) return;
         Iterator<Map.Entry<String, Task>> it = tasks.entrySet().iterator();
