@@ -18,7 +18,6 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
     private final NovaHttpAiProvider http = new NovaHttpAiProvider();
     private final NovaGeminiAiProvider gemini = new NovaGeminiAiProvider();
 
-    /** Context-free compatibility constructor for legacy NovaBrain/NovaAiClient callers. */
     public NovaAiProviderRouter() { this.context = null; }
 
     public NovaAiProviderRouter(Context context) {
@@ -53,6 +52,7 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
 
     @Override
     public void chat(String endpoint, String apiKey, String model, JSONArray messages, Callback callback) {
+        if (callback == null) return;
         String mode = configuredProvider();
         if (LOCAL.equals(mode)) { local.chat(endpoint, apiKey, model, messages, callback); return; }
         if (HTTP.equals(mode)) { http.chat(endpoint, apiKey, model, messages, callback); return; }
@@ -60,11 +60,17 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
         if (AUTO.equals(mode) || mode.isEmpty()) {
             local.chat(endpoint, apiKey, model, messages, new Callback() {
                 @Override public void onResult(String text) { callback.onResult(text); }
-                @Override public void onError(String message) {
+                @Override public void onError(String localError) {
                     http.chat(endpoint, apiKey, model, messages, new Callback() {
                         @Override public void onResult(String text) { callback.onResult(text); }
                         @Override public void onError(String httpError) {
-                            gemini.chat(endpoint, apiKey, model, messages, callback);
+                            gemini.chat(endpoint, apiKey, model, messages, new Callback() {
+                                @Override public void onResult(String text) { callback.onResult(text); }
+                                @Override public void onError(String geminiError) {
+                                    callback.onError("AI providers unavailable. Local: " + compact(localError)
+                                            + "; HTTP: " + compact(httpError) + "; Gemini: " + compact(geminiError));
+                                }
+                            });
                         }
                     });
                 }
@@ -84,6 +90,12 @@ public final class NovaAiProviderRouter implements NovaAiProvider {
 
     private String normalize(String providerId) {
         return providerId == null ? "" : providerId.trim().toLowerCase(java.util.Locale.US);
+    }
+
+    private String compact(String value) {
+        if (value == null) return "unknown";
+        String cleaned = value.replaceAll("\\s+", " ").trim();
+        return cleaned.length() > 180 ? cleaned.substring(0, 180) + "…" : cleaned;
     }
 
     @Override public void shutdown() {
