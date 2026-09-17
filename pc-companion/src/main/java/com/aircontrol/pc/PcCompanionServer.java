@@ -40,6 +40,7 @@ public final class PcCompanionServer implements AutoCloseable {
         String host = System.getenv().getOrDefault("NOVA_PC_BIND", "127.0.0.1"); int port = Integer.parseInt(System.getenv().getOrDefault("NOVA_PC_PORT", "18765"));
         HttpServer server = HttpServer.create(new InetSocketAddress(host, port), 32); server.setExecutor(Executors.newFixedThreadPool(8)); return new PcCompanionServer(server, workspace, token);
     }
+    public void start() { server.start(); }
     public InetSocketAddress address() { return server.getAddress(); }
     private void registerRoutes() {
         server.createContext("/v1/health", e -> { if (!"GET".equalsIgnoreCase(e.getRequestMethod())) { send(e,405,"{\"error\":\"method_not_allowed\"}"); return; } send(e,200,"{\"ok\":true,\"service\":\"nova-pc\"}"); });
