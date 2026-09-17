@@ -26,7 +26,7 @@ public final class NovaPcSetupActivity extends Activity {
         root.setPadding(32, 32, 32, 32);
         TextView title = new TextView(this); title.setText("NOVA PC AGENT"); title.setTextSize(24); root.addView(title);
         TextView hint = new TextView(this); hint.setText("Enter the PC companion address and its secret token. The token is stored in Android Keystore-backed storage."); root.addView(hint);
-        endpoint = new EditText(this); endpoint.setHint("http://192.168.x.x:18765/"); endpoint.setText(getPreferences(0).getString("endpoint", "")); root.addView(endpoint);
+        endpoint = new EditText(this); endpoint.setHint("http://192.168.x.x:18765/"); endpoint.setText(getSharedPreferences(PREFS, MODE_PRIVATE).getString("endpoint", "")); root.addView(endpoint);
         token = new EditText(this); token.setHint("PC token (32+ characters)"); token.setInputType(0x00000081); root.addView(token);
         save = new Button(this); save.setText("SAVE & TEST"); root.addView(save);
         save.setOnClickListener(v -> saveAndTest());
