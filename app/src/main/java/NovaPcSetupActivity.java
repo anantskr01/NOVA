@@ -41,11 +41,13 @@ public final class NovaPcSetupActivity extends Activity {
             return;
         }
         if (!url.endsWith("/")) url += "/";
+        final String finalUrl = url;
+        final String finalSecret = secret;
         save.setEnabled(false);
         Toast.makeText(this, "Testing PC companion…", Toast.LENGTH_SHORT).show();
         NovaPcHttpClient client;
         try {
-            client = new NovaPcHttpClient(url, secret, 5_000);
+            client = new NovaPcHttpClient(finalUrl, finalSecret, 5_000);
         } catch (Exception e) {
             save.setEnabled(true);
             Toast.makeText(this, "Invalid PC configuration: " + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -55,8 +57,8 @@ public final class NovaPcSetupActivity extends Activity {
         tester.execute(() -> {
             try {
                 finalClient.healthCheck();
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("endpoint", url).apply();
-                new NovaSecureStore(this).putPcToken(secret);
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("endpoint", finalUrl).apply();
+                new NovaSecureStore(this).putPcToken(finalSecret);
                 NovaPcRuntime.configure(finalClient);
                 runOnUiThread(() -> {
                     save.setEnabled(true);
