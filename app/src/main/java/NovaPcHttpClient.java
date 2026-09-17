@@ -5,7 +5,6 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.UUID;
 import javax.crypto.Mac;
@@ -26,6 +25,20 @@ public final class NovaPcHttpClient implements NovaPcAgent {
         this.baseUri = URI.create(baseUrl.endsWith("/") ? baseUrl : baseUrl + "/");
         this.token = token.getBytes(StandardCharsets.UTF_8);
         this.timeoutMs = timeoutMs;
+    }
+
+    /** Unauthenticated liveness check for the PC companion setup screen. */
+    public void healthCheck() throws IOException {
+        HttpURLConnection connection = (HttpURLConnection) baseUri.resolve("v1/health").toURL().openConnection();
+        connection.setRequestMethod("GET");
+        connection.setConnectTimeout(timeoutMs);
+        connection.setReadTimeout(timeoutMs);
+        int status = connection.getResponseCode();
+        InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+        String response = stream == null ? "" : new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        if (status < 200 || status >= 300 || !response.contains("\"ok\":true")) {
+            throw new IOException("PC companion health check failed (HTTP " + status + ")");
+        }
     }
 
     @Override public String readFile(String path) throws IOException {
