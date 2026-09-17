@@ -202,7 +202,10 @@ public final class NovaCodingAgent {
     private void status(Listener l, String s) { if (l != null) l.onStatus(s); }
     private void finish(Listener l, boolean ok, String summary) { if (l != null) l.onFinished(ok, summary); }
 
-    public void shutdown() { executor.shutdownNow(); }
+    public void shutdown() {
+        executor.shutdownNow();
+        provider.shutdown();
+    }
 
     private static final class Holder {
         boolean done;
