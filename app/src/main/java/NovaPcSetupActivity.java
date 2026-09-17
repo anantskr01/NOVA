@@ -1,0 +1,41 @@
+package com.aircontrol;
+
+import android.app.Activity;
+import android.os.Bundle;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Toast;
+
+/** Local setup screen for pairing the Android NOVA client with the PC companion. */
+public final class NovaPcSetupActivity extends Activity {
+    private static final String PREFS = "nova_pc_settings";
+    private EditText endpoint;
+    private EditText token;
+
+    @Override protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(32, 32, 32, 32);
+        TextView title = new TextView(this); title.setText("NOVA PC AGENT"); title.setTextSize(24); root.addView(title);
+        TextView hint = new TextView(this); hint.setText("Enter the PC companion address and its secret token. The token is stored in Android Keystore-backed storage."); root.addView(hint);
+        endpoint = new EditText(this); endpoint.setHint("http://192.168.x.x:18765/"); endpoint.setText(getPreferences(0).getString("endpoint", "")); root.addView(endpoint);
+        token = new EditText(this); token.setHint("PC token (32+ characters)"); token.setInputType(0x00000081); root.addView(token);
+        Button save = new Button(this); save.setText("SAVE & TEST"); root.addView(save);
+        save.setOnClickListener(v -> saveAndTest());
+        setContentView(root);
+    }
+
+    private void saveAndTest() {
+        String url = endpoint.getText().toString().trim();
+        String secret = token.getText().toString().trim();
+        if (url.isEmpty() || secret.length() < 32) { Toast.makeText(this, "Enter a valid PC URL and a 32+ character token.", Toast.LENGTH_LONG).show(); return; }
+        if (!url.endsWith("/")) url += "/";
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("endpoint", url).apply();
+        new NovaSecureStore(this).putPcToken(secret);
+        NovaPcRuntime.configure(new NovaPcHttpClient(url, secret));
+        Toast.makeText(this, "PC agent configured. NOVA can now use the PC workspace tools.", Toast.LENGTH_LONG).show();
+    }
+}
