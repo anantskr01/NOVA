@@ -21,6 +21,12 @@ public final class NovaBrain {
     private static final int MAX_AGENT_TURNS = 8;
     private static final int MAX_RELEVANT_FACTS = 8;
 
+    public enum GoalOutcome { SUCCESS, FAILED, CANCELLED }
+
+    public interface GoalListener {
+        void onGoalFinished(String goal, GoalOutcome outcome);
+    }
+
     public interface Listener {
         void onStatus(String text);
         void onReply(String text);
@@ -28,6 +34,7 @@ public final class NovaBrain {
 
     private final Context context;
     private final Listener listener;
+    private GoalListener goalListener;
     private final NovaMemory memory;
     private final NovaSecureStore secureStore;
     private final NovaAiClient ai = new NovaAiClient();
@@ -67,6 +74,8 @@ public final class NovaBrain {
         }, tools);
     }
 
+    public synchronized void setGoalListener(GoalListener listener) { goalListener = listener; }
+
     public synchronized void think(String request) {
         if (shutdown || request == null || request.trim().isEmpty()) return;
         if (getEndpoint().isEmpty()) { reply("My AI core isn't configured yet."); return; }
@@ -77,10 +86,12 @@ public final class NovaBrain {
     }
 
     public synchronized void cancelAllGoals() {
+        String cancelledGoal = activeGoal;
         generation++;
         queue.clear();
         activeGoal = "";
         processing = false;
+        if (!cancelledGoal.isEmpty()) notifyGoalFinished(cancelledGoal, GoalOutcome.CANCELLED);
         status("BRAIN • TASKS CANCELLED");
     }
 
@@ -107,8 +118,8 @@ public final class NovaBrain {
 
     private void askAi(final String goal, final int recoveryAttempt, final String feedback, final long token, final int turn, final long goalStarted) {
         synchronized (this) { if (shutdown || token != generation) return; }
-        if (NovaAgentPolicy.taskExpired(goalStarted)) { rememberAndReply("I stopped safely because the task exceeded NOVA's execution time limit."); finishGoal(token); return; }
-        if (turn >= MAX_AGENT_TURNS) { rememberAndReply("I stopped safely after reaching the agent reasoning limit."); finishGoal(token); return; }
+        if (NovaAgentPolicy.taskExpired(goalStarted)) { rememberAndReply("I stopped safely because the task exceeded NOVA's execution time limit."); finishGoal(token, GoalOutcome.FAILED); return; }
+        if (turn >= MAX_AGENT_TURNS) { rememberAndReply("I stopped safely after reaching the agent reasoning limit."); finishGoal(token, GoalOutcome.FAILED); return; }
         status(recoveryAttempt > 0 ? "BRAIN • RECOVERING → REPLANNING" : turn == 0 ? "BRAIN • UNDERSTANDING → PLANNING" : "BRAIN • OBSERVING → NEXT STEP");
         try {
             JSONArray messages = new JSONArray();
@@ -127,7 +138,7 @@ public final class NovaBrain {
                         synchronized (NovaBrain.this) { if (shutdown || token != generation) return; }
                         if (!r.planValid) {
                             if (recoveryAttempt < 1) main.post(() -> askAi(goal, recoveryAttempt + 1, "Invalid plan: " + r.failedAction, token, turn + 1, goalStarted));
-                            else { rememberAndReply("I couldn't produce a safe executable plan."); finishGoal(token); }
+                            else { rememberAndReply("I couldn't produce a safe executable plan."); finishGoal(token, GoalOutcome.FAILED); }
                             return;
                         }
                         if (!r.toolResults.isEmpty()) { main.post(() -> askAi(goal, 0, r.toolResults, token, turn + 1, goalStarted)); return; }
@@ -137,7 +148,7 @@ public final class NovaBrain {
                                 return;
                             }
                             if (!r.say.isEmpty()) rememberAndReply(r.say);
-                            finishGoal(token);
+                            finishGoal(token, GoalOutcome.SUCCESS);
                             return;
                         }
                         if (recoveryAttempt < 1) {
@@ -145,20 +156,20 @@ public final class NovaBrain {
                             main.post(() -> askAi(goal, recoveryAttempt + 1, failure, token, turn + 1, goalStarted));
                         } else {
                             rememberAndReply(r.failedAction.isEmpty() ? "I couldn't complete that task safely." : "I couldn't complete the task safely at: " + r.failedAction + ".");
-                            finishGoal(token);
+                            finishGoal(token, GoalOutcome.FAILED);
                         }
                     });
                 }
                 @Override public void onError(String message) {
                     synchronized (NovaBrain.this) { if (shutdown || token != generation) return; }
                     rememberAndReply("My AI core is unavailable right now. " + message);
-                    finishGoal(token);
+                    finishGoal(token, GoalOutcome.FAILED);
                 }
             });
         } catch (Exception e) {
             Log.e(TAG, "AI REQUEST PREPARATION ERROR", e);
             rememberAndReply("I couldn't prepare the AI request.");
-            finishGoal(token);
+            finishGoal(token, GoalOutcome.FAILED);
         }
     }
 
@@ -243,13 +254,21 @@ public final class NovaBrain {
 
     private String escape(String s) { return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", " ").replace("\n", " "); }
 
-    private void finishGoal(long token) {
+    private void finishGoal(long token, GoalOutcome outcome) {
         synchronized (this) {
             if (shutdown || token != generation) return;
-            processing = false; activeGoal = "";
+            String completedGoal = activeGoal;
+            processing = false;
+            activeGoal = "";
+            notifyGoalFinished(completedGoal, outcome);
             if (!queue.isEmpty()) { status("BRAIN • NEXT GOAL"); processNextLocked(); }
             else status("BRAIN • IDLE");
         }
+    }
+
+    private void notifyGoalFinished(String goal, GoalOutcome outcome) {
+        if (goalListener == null || goal == null || goal.isEmpty()) return;
+        try { goalListener.onGoalFinished(goal, outcome); } catch (Exception e) { Log.w(TAG, "Goal listener failed", e); }
     }
 
     private String getEndpoint() { return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(ENDPOINT, "local://nova").trim(); }
