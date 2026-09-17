@@ -57,6 +57,9 @@ public final class NovaSkillRegistry {
                 callback.status("SKILL FAILED • " + skill.id());
             }
         }
+        if (isCodingGoal(c)) {
+            return startCodingAgent(command);
+        }
         if (c.equals("what is my battery") || c.contains("battery level")) {
             android.os.BatteryManager bm = (android.os.BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
             int level = bm == null ? -1 : bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY);
@@ -115,6 +118,37 @@ public final class NovaSkillRegistry {
         if (c.contains("open bluetooth settings")) { context.startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); callback.reply("Opening Bluetooth settings."); return true; }
         if (c.contains("open wifi settings") || c.contains("wi-fi settings")) { context.startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); callback.reply("Opening Wi-Fi settings."); return true; }
         return false;
+    }
+
+    private boolean isCodingGoal(String command) {
+        return command.startsWith("code ") || command.startsWith("implement ") || command.startsWith("fix code ")
+                || command.startsWith("fix the code") || command.startsWith("debug ") || command.startsWith("refactor ")
+                || command.startsWith("modify the code") || command.startsWith("update the code")
+                || command.startsWith("build the project") || command.startsWith("make the project")
+                || command.contains("in my nova project") || command.contains("in the nova repo");
+    }
+
+    private boolean startCodingAgent(String goal) {
+        NovaPcAgent pc = NovaPcRuntime.get();
+        if (pc == null) {
+            callback.reply("The PC coding agent is not connected. Open PC agent setup first.");
+            return true;
+        }
+        android.content.SharedPreferences prefs = context.getSharedPreferences(NovaAiProviderRouter.PREFS, Context.MODE_PRIVATE);
+        String endpoint = prefs.getString("endpoint", "local://nova");
+        String model = prefs.getString("model", "gemini-3.8-flash");
+        String apiKey = new NovaSecureStore(context).getApiKey();
+        callback.status("CODING AGENT • STARTING");
+        NovaCodingAgent agent = new NovaCodingAgent(new NovaAiProviderRouter(context), endpoint, apiKey, model, pc);
+        agent.start(goal, new NovaCodingAgent.Listener() {
+            @Override public void onStatus(String text) { callback.status(text); }
+            @Override public void onFinished(boolean success, String summary) {
+                callback.status(success ? "CODING AGENT • VERIFIED" : "CODING AGENT • FAILED");
+                callback.reply(summary);
+                agent.shutdown();
+            }
+        });
+        return true;
     }
 
     private void scheduleReminder(long delayMs, String title) {
