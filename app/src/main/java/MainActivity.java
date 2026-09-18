@@ -69,6 +69,9 @@ public final class MainActivity extends Activity implements NovaAssistant.Listen
         micButton.setOnClickListener(v -> toggleListening());
         findViewById(R.id.readScreenButton).setOnClickListener(v -> nova.handle("read screen"));
         handsFreeButton.setOnClickListener(v -> toggleHandsFree());
+        findViewById(R.id.pcAgentButton).setOnClickListener(v -> {
+            startActivity(new Intent(this, NovaPcSetupActivity.class));
+        });
         findViewById(R.id.saveAiButton).setOnClickListener(v -> {
             nova.saveAiSettings(
                     aiEndpointInput.getText().toString(),
