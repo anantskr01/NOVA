@@ -33,11 +33,19 @@ public final class NovaPcHttpClient implements NovaPcAgent {
         connection.setRequestMethod("GET");
         connection.setConnectTimeout(timeoutMs);
         connection.setReadTimeout(timeoutMs);
-        int status = connection.getResponseCode();
-        InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-        String response = stream == null ? "" : new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-        if (status < 200 || status >= 300 || !response.contains("\"ok\":true")) {
-            throw new IOException("PC companion health check failed (HTTP " + status + ")");
+        connection.setUseCaches(false);
+        try {
+            int status = connection.getResponseCode();
+            InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            String response = stream == null ? "" : new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            if (status < 200 || status >= 300) {
+                throw new IOException("PC companion health check failed (HTTP " + status + "): " + response);
+            }
+            if (!response.contains("\"ok\":true") || !response.contains("\"service\":\"nova-pc\"")) {
+                throw new IOException("PC companion returned unexpected health response (HTTP " + status + "): " + response);
+            }
+        } finally {
+            connection.disconnect();
         }
     }
 
