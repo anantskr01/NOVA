@@ -10,11 +10,13 @@ import android.widget.Toast;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Local setup screen for pairing the Android NOVA client with the PC companion. */
 public final class NovaPcSetupActivity extends Activity {
     private static final String PREFS = "nova_pc_settings";
     private final ExecutorService tester = Executors.newSingleThreadExecutor();
+    private final AtomicBoolean destroyed = new AtomicBoolean(false);
     private EditText endpoint;
     private EditText token;
     private Button save;
@@ -58,15 +60,18 @@ public final class NovaPcSetupActivity extends Activity {
             try {
                 finalClient.healthCheck();
                 finalClient.authenticatedHealthCheck();
+                if (destroyed.get()) return;
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("endpoint", finalUrl).apply();
                 new NovaSecureStore(this).putPcToken(finalSecret);
                 NovaPcRuntime.configure(finalClient);
                 runOnUiThread(() -> {
+                    if (destroyed.get()) return;
                     save.setEnabled(true);
                     Toast.makeText(this, "PC companion connected and authenticated. NOVA PC tools are ready.", Toast.LENGTH_LONG).show();
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
+                    if (destroyed.get()) return;
                     save.setEnabled(true);
                     Toast.makeText(this, "PC companion not reachable: " + e.getMessage(), Toast.LENGTH_LONG).show();
                 });
@@ -75,6 +80,7 @@ public final class NovaPcSetupActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        destroyed.set(true);
         tester.shutdownNow();
         super.onDestroy();
     }
