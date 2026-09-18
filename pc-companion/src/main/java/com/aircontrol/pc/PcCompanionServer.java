@@ -218,23 +218,21 @@ public final class PcCompanionServer implements AutoCloseable {
         try { process.destroyForcibly(); } catch (Exception ignored) { }
     }
 
-    private Path resolve(String relative) throws IOException {
+    private Path resolve(String relative) {
         if (relative == null || relative.isBlank()) throw new IllegalArgumentException("path required");
         Path candidate = workspace.resolve(relative).normalize();
         if (!candidate.startsWith(workspace)) throw new IllegalArgumentException("path escapes workspace");
-        Path parent = candidate.getParent();
-        if (parent != null) {
-            Path parentReal;
-            try { parentReal = parent.toRealPath(); }
-            catch (IOException ex) { throw new IllegalArgumentException("path parent does not exist"); }
-            if (!parentReal.startsWith(workspaceReal)) throw new IllegalArgumentException("path escapes workspace");
-        }
-        if (Files.exists(candidate)) {
-            try {
-                if (!candidate.toRealPath().startsWith(workspaceReal)) throw new IllegalArgumentException("path escapes workspace");
-            } catch (IOException ex) {
-                throw new IllegalArgumentException("unable to resolve workspace path");
+
+        Path existing = candidate;
+        while (existing != null && !Files.exists(existing)) existing = existing.getParent();
+        if (existing == null) throw new IllegalArgumentException("workspace path has no existing ancestor");
+        try {
+            if (!existing.toRealPath().startsWith(workspaceReal)) throw new IllegalArgumentException("path escapes workspace");
+            if (Files.exists(candidate) && !candidate.toRealPath().startsWith(workspaceReal)) {
+                throw new IllegalArgumentException("path escapes workspace");
             }
+        } catch (IOException ex) {
+            throw new IllegalArgumentException("unable to resolve workspace path");
         }
         return candidate;
     }
