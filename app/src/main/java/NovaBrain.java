@@ -207,6 +207,14 @@ public final class NovaBrain {
 
     private String executeIntelligenceTool(String type, String value) {
         try {
+            if ("pc_read_file".equals(type) || "pc_list_files".equals(type)) {
+                try {
+                    String result = NovaPcRuntime.execute(type, value);
+                    return "{\"ok\":true,\"pc_result\":" + (result == null ? "null" : result) + "}";
+                } catch (Exception e) {
+                    return "{\"ok\":false,\"error\":\"" + escape(e.getMessage() == null ? "pc_tool_failed" : e.getMessage()) + "\"}";
+                }
+            }
             if ("web_search".equals(type)) return ok(web.search(value, 5));
             if ("web_fetch".equals(type)) return ok(web.fetch(value));
             if ("web_research".equals(type)) return ok(web.search(value, 6));
