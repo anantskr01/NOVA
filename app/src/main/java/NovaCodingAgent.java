@@ -6,6 +6,7 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Bounded coding loop: inspect workspace -> read relevant files -> make one complete edit -> verify.
@@ -24,6 +25,7 @@ public final class NovaCodingAgent {
     private final String model;
     private final NovaPcAgent pc;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final AtomicBoolean cancelled = new AtomicBoolean(false);
 
     public NovaCodingAgent(NovaAiProvider provider, String endpoint, String apiKey, String model, NovaPcAgent pc) {
         if (provider == null || pc == null) throw new IllegalArgumentException("coding agent requires AI provider and PC agent");
@@ -35,24 +37,35 @@ public final class NovaCodingAgent {
     }
 
     public void start(String goal, Listener listener) {
+        if (cancelled.get()) return;
         executor.execute(() -> run(goal == null ? "" : goal.trim(), listener));
     }
 
+    /** Requests cancellation without delivering a stale completion callback. */
+    public void cancel() {
+        cancelled.set(true);
+        executor.shutdownNow();
+    }
+
     private void run(String goal, Listener listener) {
+        if (cancelled.get()) return;
         if (goal.isEmpty()) {
             finish(listener, false, "Coding goal is empty.");
             return;
         }
         try {
             status(listener, "CODING AGENT • INSPECTING WORKSPACE");
+            checkCancelled();
             String workspace = pc.listFiles(".");
             String build = safeRead("build.gradle");
             String settings = safeRead("settings.gradle");
             String prompt = buildPrompt(goal, workspace, build, settings);
 
             for (int iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+                checkCancelled();
                 status(listener, "CODING AGENT • ITERATION " + iteration + "/" + MAX_ITERATIONS);
                 String raw = askModel(prompt);
+                checkCancelled();
                 JSONObject plan = parsePlan(raw);
                 String action = plan.optString("action", "");
 
@@ -65,11 +78,14 @@ public final class NovaCodingAgent {
                     String path = validatePath(plan.optString("path", ""));
                     String content;
                     try {
+                        checkCancelled();
                         content = pc.readFile(path);
                     } catch (Exception e) {
+                        if (cancelled.get()) return;
                         prompt = feedback(goal, "read", path, "Read failed: " + e.getMessage());
                         continue;
                     }
+                    checkCancelled();
                     prompt = prompt + "\n\nREAD FILE " + path + ":\n" + limit(content) + "\n\nNow return exactly one JSON action: read another relevant file, write one complete file, or finish.";
                     continue;
                 }
@@ -85,17 +101,21 @@ public final class NovaCodingAgent {
                     finish(listener, false, "Coding agent returned an empty file edit.");
                     return;
                 }
+                checkCancelled();
                 pc.writeFile(path, content);
                 status(listener, "CODING AGENT • UPDATED " + path);
 
+                checkCancelled();
                 NovaPcAgent.ProcessResult check = pc.runAllowed("git diff --check");
                 if (check.exitCode() != 0) {
                     prompt = feedback(goal, "diff", path, check.output());
                     continue;
                 }
 
+                checkCancelled();
                 check = pc.runAllowed("gradlew.bat assembleDebug");
                 if (check.exitCode() == 0) {
+                    checkCancelled();
                     NovaPcAgent.ProcessResult statusCheck = pc.runAllowed("git status --short --branch");
                     finish(listener, true, "Implemented and verified changes for: " + goal + "\n" + statusCheck.output());
                     return;
@@ -104,12 +124,16 @@ public final class NovaCodingAgent {
             }
 
             finish(listener, false, "Coding agent reached its bounded iteration limit without verification success.");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            if (!cancelled.get()) finish(listener, false, "Coding agent interrupted.");
         } catch (Exception e) {
-            finish(listener, false, "Coding agent failed: " + e.getMessage());
+            if (!cancelled.get()) finish(listener, false, "Coding agent failed: " + e.getMessage());
         }
     }
 
     private String askModel(String prompt) throws Exception {
+        checkCancelled();
         final Holder holder = new Holder();
         JSONArray messages = new JSONArray()
                 .put(new JSONObject().put("role", "system").put("content", systemPrompt()))
@@ -134,19 +158,27 @@ public final class NovaCodingAgent {
         long deadline = System.currentTimeMillis() + MODEL_TIMEOUT_MS;
         synchronized (holder) {
             while (!holder.done) {
+                if (cancelled.get()) throw new InterruptedException("coding agent cancelled");
                 long remaining = deadline - System.currentTimeMillis();
                 if (remaining <= 0) throw new IOException("AI response timed out");
                 holder.wait(remaining);
             }
         }
+        checkCancelled();
         if (holder.error != null) throw new IOException(holder.error);
         if (holder.value == null || holder.value.trim().isEmpty()) throw new IOException("AI returned an empty response");
         return holder.value;
     }
 
+    private void checkCancelled() throws InterruptedException {
+        if (cancelled.get() || Thread.currentThread().isInterrupted()) throw new InterruptedException("coding agent cancelled");
+    }
+
     private String safeRead(String path) {
-        try { return limit(pc.readFile(path)); }
-        catch (Exception ignored) { return "<not present>"; }
+        try {
+            if (cancelled.get()) return "";
+            return limit(pc.readFile(path));
+        } catch (Exception ignored) { return "<not present>"; }
     }
 
     private static String buildPrompt(String goal, String workspace, String build, String settings) {
@@ -199,10 +231,11 @@ public final class NovaCodingAgent {
         return value.substring(0, MAX_CONTEXT_CHARS) + "\n[truncated]";
     }
 
-    private void status(Listener l, String s) { if (l != null) l.onStatus(s); }
-    private void finish(Listener l, boolean ok, String summary) { if (l != null) l.onFinished(ok, summary); }
+    private void status(Listener l, String s) { if (!cancelled.get() && l != null) l.onStatus(s); }
+    private void finish(Listener l, boolean ok, String summary) { if (!cancelled.get() && l != null) l.onFinished(ok, summary); }
 
     public void shutdown() {
+        cancelled.set(true);
         executor.shutdownNow();
         provider.shutdown();
     }
