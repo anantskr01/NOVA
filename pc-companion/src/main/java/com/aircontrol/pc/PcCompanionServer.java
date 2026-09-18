@@ -73,6 +73,7 @@ public final class PcCompanionServer implements AutoCloseable {
             }
             send(e, 200, "{\"ok\":true,\"service\":\"nova-pc\"}");
         });
+        server.createContext("/v1/auth/test", this::authTest);
         server.createContext("/v1/fs/read", this::readFile);
         server.createContext("/v1/fs/write", this::writeFile);
         server.createContext("/v1/fs/list", this::listFiles);
@@ -111,6 +112,12 @@ public final class PcCompanionServer implements AutoCloseable {
             send(exchange, 500, "{\"error\":\"auth_failure\"}");
             return false;
         }
+    }
+
+    private void authTest(HttpExchange e) throws IOException {
+        String body = readBody(e);
+        if (body == null || !authenticate(e, body)) return;
+        send(e, 200, "{\"ok\":true,\"service\":\"nova-pc\",\"authenticated\":true}");
     }
 
     private void readFile(HttpExchange e) throws IOException {
