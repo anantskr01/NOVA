@@ -38,7 +38,7 @@ public final class PcCompanionServer implements AutoCloseable {
     private final byte[] token;
     private final Map<String, Long> nonces = new ConcurrentHashMap<>();
 
-    private PcCompanionServer(HttpServer server, Path workspace, String token, ExecutorService executor) throws IOException {
+    PcCompanionServer(HttpServer server, Path workspace, String token, ExecutorService executor) throws IOException {
         this.server = server;
         this.executor = executor;
         this.workspace = workspace.toAbsolutePath().normalize();
