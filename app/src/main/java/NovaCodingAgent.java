@@ -60,6 +60,7 @@ public final class NovaCodingAgent {
             String build = safeRead("build.gradle");
             String settings = safeRead("settings.gradle");
             String prompt = buildPrompt(goal, workspace, build, settings);
+            boolean verified = false;
 
             for (int iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
                 checkCancelled();
@@ -70,7 +71,13 @@ public final class NovaCodingAgent {
                 String action = plan.optString("action", "");
 
                 if ("finish".equals(action)) {
-                    finish(listener, plan.optBoolean("success", false), plan.optString("summary", "Coding agent finished."));
+                    boolean requestedSuccess = plan.optBoolean("success", false);
+                    if (requestedSuccess && !verified) {
+                        prompt = feedback(goal, "completion", "", "The model claimed success before a successful build verification. Inspect the relevant files, make any needed edits, and verify with the build before claiming success.");
+                        status(listener, "CODING AGENT • COMPLETION CLAIM REJECTED • VERIFICATION REQUIRED");
+                        continue;
+                    }
+                    finish(listener, requestedSuccess, plan.optString("summary", "Coding agent finished."));
                     return;
                 }
 
@@ -102,6 +109,7 @@ public final class NovaCodingAgent {
                     return;
                 }
                 checkCancelled();
+                verified = false;
                 pc.writeFile(path, content);
                 status(listener, "CODING AGENT • UPDATED " + path);
 
@@ -115,6 +123,7 @@ public final class NovaCodingAgent {
                 checkCancelled();
                 check = pc.runAllowed("gradlew.bat assembleDebug");
                 if (check.exitCode() == 0) {
+                    verified = true;
                     checkCancelled();
                     NovaPcAgent.ProcessResult statusCheck = pc.runAllowed("git status --short --branch");
                     finish(listener, true, "Implemented and verified changes for: " + goal + "\n" + statusCheck.output());
