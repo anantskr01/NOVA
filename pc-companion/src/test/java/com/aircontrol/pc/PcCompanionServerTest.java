@@ -104,6 +104,29 @@ final class PcCompanionServerTest {
     }
 
     @Test
+    void authenticatedNestedFileWriteAndReadWorks() throws Exception {
+        String writeBody = "{\"path\":\"nested/hello.txt\",\"content\":\"hello-nova\"}";
+        HttpResponse<String> write = sendSigned(
+                "/v1/fs/write",
+                writeBody,
+                TOKEN,
+                UUID.randomUUID().toString());
+
+        assertEquals(200, write.statusCode());
+        assertTrue(write.body().contains("\"ok\":true"));
+
+        String readBody = "{\"path\":\"nested/hello.txt\"}";
+        HttpResponse<String> read = sendSigned(
+                "/v1/fs/read",
+                readBody,
+                TOKEN,
+                UUID.randomUUID().toString());
+
+        assertEquals(200, read.statusCode());
+        assertTrue(read.body().contains("hello-nova"));
+    }
+
+    @Test
     void arbitraryProcessCommandIsRejected() throws Exception {
         String body = "{\"command\":\"whoami\"}";
 
