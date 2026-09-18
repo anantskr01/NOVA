@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -18,21 +19,28 @@ import java.util.HexFormat;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class PcCompanionServer implements AutoCloseable {
     private static final long MAX_SKEW_SECONDS = 60;
     private static final int MAX_BODY = 256 * 1024;
+    private static final int MAX_PROCESS_OUTPUT = 512 * 1024;
+    private static final long PROCESS_TIMEOUT_MILLIS = 110_000L;
+    private static final long PROCESS_KILL_GRACE_MILLIS = 5_000L;
     private static final Pattern JSON_STRING = Pattern.compile("\\\"%s\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"])*)\\\"");
     private final HttpServer server;
     private final Path workspace;
+    private final Path workspaceReal;
     private final byte[] token;
     private final Map<String, Long> nonces = new ConcurrentHashMap<>();
 
-    private PcCompanionServer(HttpServer server, Path workspace, String token) {
+    private PcCompanionServer(HttpServer server, Path workspace, String token) throws IOException {
         this.server = server;
         this.workspace = workspace.toAbsolutePath().normalize();
+        Files.createDirectories(this.workspace);
+        this.workspaceReal = this.workspace.toRealPath();
         this.token = token.getBytes(StandardCharsets.UTF_8);
         registerRoutes();
     }
@@ -81,7 +89,6 @@ public final class PcCompanionServer implements AutoCloseable {
         long now = Instant.now().getEpochSecond();
         if (Math.abs(now - ts) > MAX_SKEW_SECONDS) { send(exchange, 401, "{\"error\":\"expired_request\"}"); return false; }
         nonces.entrySet().removeIf(e -> now - e.getValue() > MAX_SKEW_SECONDS * 2);
-        if (nonces.putIfAbsent(nonce, ts) != null) { send(exchange, 409, "{\"error\":\"replay\"}"); return false; }
         String canonical = exchange.getRequestMethod() + "\n" + exchange.getRequestURI().getPath() + "\n" + timestamp + "\n" + nonce + "\n" + body;
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
@@ -89,6 +96,10 @@ public final class PcCompanionServer implements AutoCloseable {
             String expected = HexFormat.of().formatHex(mac.doFinal(canonical.getBytes(StandardCharsets.UTF_8)));
             if (!MessageDigest.isEqual(expected.getBytes(StandardCharsets.US_ASCII), signature.getBytes(StandardCharsets.US_ASCII))) {
                 send(exchange, 401, "{\"error\":\"invalid_signature\"}");
+                return false;
+            }
+            if (nonces.putIfAbsent(nonce, ts) != null) {
+                send(exchange, 409, "{\"error\":\"replay\"}");
                 return false;
             }
             return true;
@@ -115,7 +126,7 @@ public final class PcCompanionServer implements AutoCloseable {
             String body = readBody(e);
             if (body == null || !authenticate(e, body)) return;
             String rel = jsonString(body, "path"), content = jsonString(body, "content");
-            if (content.length() > MAX_BODY) { send(e, 413, "{\"error\":\"body_too_large\"}"); return; }
+            if (content.getBytes(StandardCharsets.UTF_8).length > MAX_BODY) { send(e, 413, "{\"error\":\"body_too_large\"}"); return; }
             Path file = resolve(rel);
             Files.createDirectories(file.getParent());
             Files.writeString(file, content);
@@ -150,18 +161,81 @@ public final class PcCompanionServer implements AutoCloseable {
             String command = jsonString(body, "command");
             if (!AllowedCommands.isAllowed(command)) { send(e, 403, "{\"error\":\"command_not_allowlisted\"}"); return; }
             Process p = AllowedCommands.build(command, workspace).redirectErrorStream(true).start();
-            String output;
-            try (InputStream in = p.getInputStream()) { output = new String(in.readNBytes(512 * 1024), StandardCharsets.UTF_8); }
-            try { p.waitFor(); }
-            catch (InterruptedException ex) { Thread.currentThread().interrupt(); p.destroyForcibly(); }
-            send(e, 200, "{\"exitCode\":" + p.exitValue() + ",\"output\":" + quote(output) + "}");
+            ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(MAX_PROCESS_OUTPUT, 64 * 1024));
+            Thread reader = new Thread(() -> drainProcessOutput(p.getInputStream(), output), "nova-pc-output");
+            reader.setDaemon(true);
+            reader.start();
+
+            boolean completed;
+            try {
+                completed = p.waitFor(PROCESS_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                destroyProcessTree(p);
+                completed = false;
+            }
+
+            boolean timedOut = !completed;
+            if (timedOut) {
+                destroyProcessTree(p);
+                try { p.waitFor(PROCESS_KILL_GRACE_MILLIS, TimeUnit.MILLISECONDS); }
+                catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
+            }
+
+            try { reader.join(PROCESS_KILL_GRACE_MILLIS); }
+            catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
+            if (reader.isAlive()) reader.interrupt();
+
+            String result = output.toString(StandardCharsets.UTF_8);
+            if (timedOut) {
+                result = result + (result.isEmpty() ? "" : "\n") + "Process timed out after " + PROCESS_TIMEOUT_MILLIS + " ms.";
+                send(e, 200, "{\"exitCode\":124,\"output\":" + quote(result) + ",\"timedOut\":true}");
+            } else {
+                send(e, 200, "{\"exitCode\":" + p.exitValue() + ",\"output\":" + quote(result) + ",\"timedOut\":false}");
+            }
         } catch (IllegalArgumentException ex) { send(e, 400, "{\"error\":" + quote(ex.getMessage()) + "}"); }
     }
 
-    private Path resolve(String relative) {
+    private static void drainProcessOutput(InputStream in, ByteArrayOutputStream output) {
+        byte[] buffer = new byte[8192];
+        try (InputStream stream = in) {
+            int read;
+            while ((read = stream.read(buffer)) != -1) {
+                synchronized (output) {
+                    int remaining = MAX_PROCESS_OUTPUT - output.size();
+                    if (remaining > 0) output.write(buffer, 0, Math.min(read, remaining));
+                }
+            }
+        } catch (IOException ignored) { }
+    }
+
+    private static void destroyProcessTree(Process process) {
+        try {
+            process.toHandle().descendants().forEach(child -> {
+                try { child.destroyForcibly(); } catch (Exception ignored) { }
+            });
+        } catch (Exception ignored) { }
+        try { process.destroyForcibly(); } catch (Exception ignored) { }
+    }
+
+    private Path resolve(String relative) throws IOException {
         if (relative == null || relative.isBlank()) throw new IllegalArgumentException("path required");
         Path candidate = workspace.resolve(relative).normalize();
         if (!candidate.startsWith(workspace)) throw new IllegalArgumentException("path escapes workspace");
+        Path parent = candidate.getParent();
+        if (parent != null) {
+            Path parentReal;
+            try { parentReal = parent.toRealPath(); }
+            catch (IOException ex) { throw new IllegalArgumentException("path parent does not exist"); }
+            if (!parentReal.startsWith(workspaceReal)) throw new IllegalArgumentException("path escapes workspace");
+        }
+        if (Files.exists(candidate)) {
+            try {
+                if (!candidate.toRealPath().startsWith(workspaceReal)) throw new IllegalArgumentException("path escapes workspace");
+            } catch (IOException ex) {
+                throw new IllegalArgumentException("unable to resolve workspace path");
+            }
+        }
         return candidate;
     }
 
