@@ -44,7 +44,7 @@ public final class NovaPcSetupActivity extends Activity {
         final String finalUrl = url;
         final String finalSecret = secret;
         save.setEnabled(false);
-        Toast.makeText(this, "Testing PC companion…", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Testing PC companion and token…", Toast.LENGTH_SHORT).show();
         NovaPcHttpClient client;
         try {
             client = new NovaPcHttpClient(finalUrl, finalSecret, 5_000);
@@ -57,12 +57,13 @@ public final class NovaPcSetupActivity extends Activity {
         tester.execute(() -> {
             try {
                 finalClient.healthCheck();
+                finalClient.authenticatedHealthCheck();
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("endpoint", finalUrl).apply();
                 new NovaSecureStore(this).putPcToken(finalSecret);
                 NovaPcRuntime.configure(finalClient);
                 runOnUiThread(() -> {
                     save.setEnabled(true);
-                    Toast.makeText(this, "PC companion connected. NOVA PC tools are ready.", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, "PC companion connected and authenticated. NOVA PC tools are ready.", Toast.LENGTH_LONG).show();
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
