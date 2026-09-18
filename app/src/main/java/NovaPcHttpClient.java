@@ -49,6 +49,14 @@ public final class NovaPcHttpClient implements NovaPcAgent {
         }
     }
 
+    /** Authenticated pairing check used before storing the PC configuration. */
+    public void authenticatedHealthCheck() throws IOException {
+        String response = post("v1/auth/test", "{}");
+        if (!response.contains("\"ok\":true") || !response.contains("\"authenticated\":true")) {
+            throw new IOException("PC companion returned an unexpected authentication response: " + response);
+        }
+    }
+
     @Override public String readFile(String path) throws IOException {
         return post("v1/fs/read", "{\"path\":" + quote(path) + "}");
     }
