@@ -119,7 +119,7 @@ final class PcCompanionServerTest {
 
     private HttpResponse<String> sendSigned(String route, String body, String signingToken, String nonce) throws Exception {
         String timestamp = Long.toString(System.currentTimeMillis() / 1000L);
-        String canonical = "POST\\n" + route + "\\n" + timestamp + "\\n" + nonce + "\\n" + body;
+        String canonical = "POST\n" + route + "\n" + timestamp + "\n" + nonce + "\n" + body;
         String signature = hmac(signingToken, canonical);
 
         return client.send(
