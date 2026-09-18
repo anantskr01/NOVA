@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -31,13 +32,15 @@ public final class PcCompanionServer implements AutoCloseable {
     private static final long PROCESS_KILL_GRACE_MILLIS = 5_000L;
     private static final Pattern JSON_STRING = Pattern.compile("\\\"%s\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"])*)\\\"");
     private final HttpServer server;
+    private final ExecutorService executor;
     private final Path workspace;
     private final Path workspaceReal;
     private final byte[] token;
     private final Map<String, Long> nonces = new ConcurrentHashMap<>();
 
-    private PcCompanionServer(HttpServer server, Path workspace, String token) throws IOException {
+    private PcCompanionServer(HttpServer server, Path workspace, String token, ExecutorService executor) throws IOException {
         this.server = server;
+        this.executor = executor;
         this.workspace = workspace.toAbsolutePath().normalize();
         Files.createDirectories(this.workspace);
         this.workspaceReal = this.workspace.toRealPath();
@@ -54,8 +57,9 @@ public final class PcCompanionServer implements AutoCloseable {
         String host = System.getenv().getOrDefault("NOVA_PC_BIND", "127.0.0.1");
         int port = Integer.parseInt(System.getenv().getOrDefault("NOVA_PC_PORT", "18765"));
         HttpServer server = HttpServer.create(new InetSocketAddress(host, port), 32);
-        server.setExecutor(Executors.newFixedThreadPool(8));
-        return new PcCompanionServer(server, workspace, token);
+        ExecutorService executor = Executors.newFixedThreadPool(8);
+        server.setExecutor(executor);
+        return new PcCompanionServer(server, workspace, token, executor);
     }
 
     public void start() { server.start(); }
@@ -272,7 +276,10 @@ public final class PcCompanionServer implements AutoCloseable {
         try (OutputStream out = e.getResponseBody()) { out.write(bytes); }
     }
 
-    @Override public void close() { server.stop(0); }
+    @Override public void close() {
+        server.stop(0);
+        executor.shutdownNow();
+    }
 
     private static final class AllowedCommands {
         static boolean isAllowed(String c) {
