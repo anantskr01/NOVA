@@ -132,6 +132,13 @@
                 android:text="READ CURRENT SCREEN" />
 
             <Button
+                android:id="@+id/pcAgentButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="OPEN PC AGENT SETUP" />
+
+            <Button
                 android:id="@+id/handsFreeButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
