@@ -6,6 +6,8 @@ public final class NovaAgentPolicy {
     public static final int MAX_RETRIES = 2;
     /** Overall autonomous-goal budget. Conversation requests do not use this limit. */
     public static final long MAX_TASK_MILLIS = 120_000L;
+    /** Coding-agent work may include a full Android build and therefore gets a longer external-task budget. */
+    public static final long MAX_CODING_TASK_MILLIS = 10 * 60_000L;
     public static final int MAX_TOOL_RESULT_CHARS = 16_384;
     public static final int MAX_CONTEXT_ITEMS = 24;
 
