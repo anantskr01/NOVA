@@ -1,5 +1,6 @@
 package com.aircontrol;
 
+import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import org.json.JSONArray;
@@ -24,6 +25,8 @@ public final class NovaTaskManager {
     public static final int PRIORITY_NORMAL = 5;
     public static final int PRIORITY_LOW = 2;
     private static final int MAX_TRACKED = 32;
+    private static final String PREFS = "nova_task_manager";
+    private static final String TASKS_KEY = "tasks";
     private static final AtomicLong NEXT_ID = new AtomicLong(1);
 
     public interface ExternalTask {
@@ -46,10 +49,20 @@ public final class NovaTaskManager {
         private long startedAt;
         private long finishedAt;
         private String status = QUEUED;
+
         private Task(String id, String goal, int priority, long sequence, ExternalTask external) {
-            this.id = id; this.goal = goal; this.priority = priority; this.sequence = sequence;
-            this.createdAt = System.currentTimeMillis(); this.external = external;
+            this(id, goal, priority, sequence, System.currentTimeMillis(), external);
         }
+
+        private Task(String id, String goal, int priority, long sequence, long createdAt, ExternalTask external) {
+            this.id = id;
+            this.goal = goal;
+            this.priority = priority;
+            this.sequence = sequence;
+            this.createdAt = createdAt;
+            this.external = external;
+        }
+
         public String id() { return id; }
         public String goal() { return goal; }
         public int priority() { return priority; }
@@ -57,12 +70,14 @@ public final class NovaTaskManager {
     }
 
     private final NovaBrain brain;
+    private final Context context;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final PriorityQueue<Task> queue = new PriorityQueue<>(
             Comparator.<Task>comparingInt(Task::priority).reversed().thenComparingLong(t -> t.sequence));
     private final LinkedHashMap<String, Task> tasks = new LinkedHashMap<>();
     private Task active;
     private boolean shutdown;
+
     private final Runnable pump = new Runnable() {
         @Override public void run() {
             synchronized (NovaTaskManager.this) {
@@ -74,8 +89,14 @@ public final class NovaTaskManager {
     };
 
     public NovaTaskManager(NovaBrain brain) {
+        this(brain, null);
+    }
+
+    public NovaTaskManager(NovaBrain brain, Context context) {
         if (brain == null) throw new IllegalArgumentException("brain == null");
         this.brain = brain;
+        this.context = context == null ? null : context.getApplicationContext();
+        restorePersistedTasks();
         brain.setGoalListener(this::onBrainGoalFinished);
         main.post(pump);
     }
@@ -95,10 +116,11 @@ public final class NovaTaskManager {
         if (tasks.size() >= MAX_TRACKED) return "";
         int p = Math.max(0, Math.min(priority, 10));
         long sequence = NEXT_ID.getAndIncrement();
-        String id = "NOVA-T" + String.format("%04d", sequence);
+        String id = "NOVA-T" + String.format(java.util.Locale.US, "%04d", sequence);
         Task task = new Task(id, goal.trim(), p, sequence, external);
         tasks.put(id, task);
         queue.offer(task);
+        persistLocked();
         pumpLocked();
         return id;
     }
@@ -106,7 +128,8 @@ public final class NovaTaskManager {
     private void pumpLocked() {
         if (shutdown || brain == null) return;
         if (active != null) {
-            if (active.startedAt > 0 && System.currentTimeMillis() - active.startedAt > (active.external != null ? NovaAgentPolicy.MAX_CODING_TASK_MILLIS : NovaAgentPolicy.MAX_TASK_MILLIS) + 5_000L) {
+            if (active.startedAt > 0 && System.currentTimeMillis() - active.startedAt >
+                    (active.external != null ? NovaAgentPolicy.MAX_CODING_TASK_MILLIS : NovaAgentPolicy.MAX_TASK_MILLIS) + 5_000L) {
                 Task timedOut = active;
                 timedOut.status = FAILED;
                 timedOut.finishedAt = System.currentTimeMillis();
@@ -116,6 +139,7 @@ public final class NovaTaskManager {
                 } else {
                     brain.cancelAllGoals();
                 }
+                persistLocked();
                 status("TASK " + timedOut.id + " • TIMEOUT");
             } else if (active.external != null) {
                 return;
@@ -131,12 +155,15 @@ public final class NovaTaskManager {
         active = next;
         next.status = RUNNING;
         next.startedAt = System.currentTimeMillis();
+        persistLocked();
+
         if (next.external != null) {
             try {
                 next.external.start(new ExternalListener() {
                     @Override public void onStatus(String text) {
                         if (text != null && !text.trim().isEmpty()) status("TASK " + next.id + " • " + text);
                     }
+
                     @Override public void onFinished(boolean success, String summary) {
                         main.post(() -> onExternalTaskFinished(next, success, summary));
                     }
@@ -155,6 +182,7 @@ public final class NovaTaskManager {
             task.status = success ? COMPLETED : FAILED;
             task.finishedAt = System.currentTimeMillis();
             active = null;
+            persistLocked();
             status("TASK " + task.id + " • " + (success ? "COMPLETED" : "FAILED"));
             if (summary != null && !summary.trim().isEmpty()) status(summary.trim());
             pumpLocked();
@@ -169,6 +197,7 @@ public final class NovaTaskManager {
         else active.status = CANCELLED;
         active.finishedAt = System.currentTimeMillis();
         active = null;
+        persistLocked();
         pumpLocked();
     }
 
@@ -184,12 +213,14 @@ public final class NovaTaskManager {
             } else {
                 brain.cancelAllGoals();
             }
+            persistLocked();
             pumpLocked();
             return true;
         }
         queue.remove(task);
         task.status = CANCELLED;
         task.finishedAt = System.currentTimeMillis();
+        persistLocked();
         return true;
     }
 
@@ -203,6 +234,7 @@ public final class NovaTaskManager {
                 count++;
             }
         }
+        if (count > 0) persistLocked();
         return count;
     }
 
@@ -223,31 +255,38 @@ public final class NovaTaskManager {
             try { running.external.cancel(); } catch (Exception ignored) { }
         }
         if (brain != null) brain.cancelAllGoals();
+        if (count > 0) persistLocked();
         return count;
     }
 
     public synchronized Task active() { return active; }
     public synchronized int queuedCount() { return queue.size(); }
+
     public synchronized String activeText() {
         if (active == null || !RUNNING.equals(active.status)) return "NOVA is idle.";
         return "NOVA is running " + active.id + ": " + active.goal;
     }
+
     public synchronized String statusText() {
         if (tasks.isEmpty()) return "NOVA has no tracked tasks.";
         StringBuilder out = new StringBuilder("NOVA TASKS\n");
-        for (Task task : tasks.values()) out.append(task.id).append(" • ").append(task.status.toUpperCase()).append(" • P").append(task.priority).append(" • ").append(task.goal).append('\n');
+        for (Task task : tasks.values()) {
+            out.append(task.id).append(" • ").append(task.status.toUpperCase())
+                    .append(" • P").append(task.priority).append(" • ").append(task.goal).append('\n');
+        }
         return out.toString().trim();
     }
+
     public synchronized JSONArray snapshot() {
         JSONArray out = new JSONArray();
         for (Task task : tasks.values()) {
             try {
-                out.put(new JSONObject().put("id", task.id).put("goal", task.goal).put("priority", task.priority)
-                        .put("status", task.status).put("createdAt", task.createdAt).put("startedAt", task.startedAt).put("finishedAt", task.finishedAt));
+                out.put(toJson(task));
             } catch (Exception ignored) { }
         }
         return out;
     }
+
     public synchronized void shutdown() {
         shutdown = true;
         main.removeCallbacks(pump);
@@ -261,9 +300,93 @@ public final class NovaTaskManager {
             }
         }
         active = null;
+        persistLocked();
         if (brain != null) brain.cancelAllGoals();
     }
+
+    private void restorePersistedTasks() {
+        if (context == null) return;
+        try {
+            String raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(TASKS_KEY, "");
+            if (raw == null || raw.trim().isEmpty()) return;
+            JSONArray saved = new JSONArray(raw);
+            long maxSequence = 0L;
+            for (int i = 0; i < saved.length() && tasks.size() < MAX_TRACKED; i++) {
+                JSONObject o = saved.optJSONObject(i);
+                if (o == null) continue;
+                String id = o.optString("id", "").trim().toUpperCase();
+                String goal = o.optString("goal", "").trim();
+                String status = o.optString("status", QUEUED).trim().toLowerCase();
+                if (id.isEmpty() || goal.isEmpty()) continue;
+                long sequence = parseSequence(id, o.optLong("sequence", 0L));
+                if (sequence <= 0) sequence = maxSequence + 1L;
+                maxSequence = Math.max(maxSequence, sequence);
+                int priority = Math.max(0, Math.min(10, o.optInt("priority", PRIORITY_NORMAL)));
+                long createdAt = Math.max(0L, o.optLong("createdAt", System.currentTimeMillis()));
+                Task task = new Task(id, goal, priority, sequence, createdAt, null);
+                task.startedAt = Math.max(0L, o.optLong("startedAt", 0L));
+                task.finishedAt = Math.max(0L, o.optLong("finishedAt", 0L));
+
+                if (RUNNING.equals(status)) {
+                    // A process restart cannot safely resume an external agent instance.
+                    // Brain goals are safe to requeue because NovaBrain owns their live state.
+                    status = QUEUED;
+                    task.startedAt = 0L;
+                    task.finishedAt = 0L;
+                    queue.offer(task);
+                } else if (QUEUED.equals(status)) {
+                    queue.offer(task);
+                }
+                task.status = status;
+                if (COMPLETED.equals(status) || FAILED.equals(status) || CANCELLED.equals(status)) {
+                    task.status = status;
+                } else if (!QUEUED.equals(status)) {
+                    continue;
+                }
+                tasks.put(id, task);
+            }
+            NEXT_ID.set(Math.max(NEXT_ID.get(), maxSequence + 1L));
+            persistLocked();
+        } catch (Exception ignored) {
+            // Corrupt scheduler state must never prevent NOVA from starting.
+        }
+    }
+
+    private long parseSequence(String id, long fallback) {
+        try {
+            if (id.startsWith("NOVA-T")) return Long.parseLong(id.substring(6));
+        } catch (Exception ignored) { }
+        return fallback;
+    }
+
+    private JSONObject toJson(Task task) throws Exception {
+        return new JSONObject()
+                .put("id", task.id)
+                .put("goal", task.goal)
+                .put("priority", task.priority)
+                .put("sequence", task.sequence)
+                .put("status", task.status)
+                .put("createdAt", task.createdAt)
+                .put("startedAt", task.startedAt)
+                .put("finishedAt", task.finishedAt)
+                .put("external", task.external != null);
+    }
+
+    private void persistLocked() {
+        if (context == null) return;
+        try {
+            JSONArray out = new JSONArray();
+            for (Task task : tasks.values()) {
+                if (out.length() >= MAX_TRACKED) break;
+                out.put(toJson(task));
+            }
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putString(TASKS_KEY, out.toString()).apply();
+        } catch (Exception ignored) { }
+    }
+
     private String normalizeId(String id) { return id == null ? "" : id.trim().toUpperCase(); }
+
     private void pruneFinished() {
         if (tasks.size() < MAX_TRACKED) return;
         Iterator<Map.Entry<String, Task>> it = tasks.entrySet().iterator();
@@ -272,5 +395,6 @@ public final class NovaTaskManager {
             if (COMPLETED.equals(task.status) || FAILED.equals(task.status) || CANCELLED.equals(task.status)) it.remove();
         }
     }
+
     private void status(String text) { System.out.println("NOVA • " + text); }
 }
