@@ -18,7 +18,8 @@ public final class NovaBrain {
     private static final String ENDPOINT = "endpoint";
     private static final String MODEL = "model";
     private static final int MAX_QUEUE = 6;
-    private static final int MAX_AGENT_TURNS = 8;
+    private static final int MAX_AGENT_TURNS = 10;
+    private static final int MAX_RECOVERY_ATTEMPTS = 2;
     private static final int MAX_RELEVANT_FACTS = 8;
 
     public enum GoalOutcome { SUCCESS, FAILED, CANCELLED }
@@ -137,7 +138,7 @@ public final class NovaBrain {
                         NovaAgentPlanner.ExecutionResult r = planner.executeDetailed(text);
                         synchronized (NovaBrain.this) { if (shutdown || token != generation) return; }
                         if (!r.planValid) {
-                            if (recoveryAttempt < 1) main.post(() -> askAi(goal, recoveryAttempt + 1, "Invalid plan: " + r.failedAction, token, turn + 1, goalStarted));
+                            if (recoveryAttempt < MAX_RECOVERY_ATTEMPTS) main.post(() -> askAi(goal, recoveryAttempt + 1, "Invalid plan: " + r.failedAction + "\nGenerate a different valid plan; do not repeat malformed output.", token, turn + 1, goalStarted));
                             else { rememberAndReply("I couldn't produce a safe executable plan."); finishGoal(token, GoalOutcome.FAILED); }
                             return;
                         }
@@ -151,8 +152,8 @@ public final class NovaBrain {
                             finishGoal(token, GoalOutcome.SUCCESS);
                             return;
                         }
-                        if (recoveryAttempt < 1) {
-                            String failure = "Failed action: " + r.failedAction + "\nObserved UI after failure:\n" + r.finalScreen;
+                        if (recoveryAttempt < MAX_RECOVERY_ATTEMPTS) {
+                            String failure = "Failed action: " + r.failedAction + "\nObserved UI after failure:\n" + r.finalScreen + "\nRecovery attempt " + (recoveryAttempt + 1) + " of " + MAX_RECOVERY_ATTEMPTS + ". Re-observe and choose a meaningfully different safe approach; do not blindly repeat the failed action.";
                             main.post(() -> askAi(goal, recoveryAttempt + 1, failure, token, turn + 1, goalStarted));
                         } else {
                             rememberAndReply(r.failedAction.isEmpty() ? "I couldn't complete that task safely." : "I couldn't complete the task safely at: " + r.failedAction + ".");
