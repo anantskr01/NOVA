@@ -72,6 +72,7 @@ public final class NovaVoiceService extends Service {
     private volatile boolean running = false;
     private volatile boolean audioRunning = false;
     private volatile boolean recognizerRunning = false;
+    private boolean restartScheduled = false;
 
     private boolean awake = false;
     private long awakeUntil = 0L;
@@ -817,32 +818,14 @@ public final class NovaVoiceService extends Service {
                         "NOVA • speech reconnecting"
                 );
 
-                if (error ==
-                        SpeechRecognizer.ERROR_NO_MATCH) {
-
-                    /*
-                     * No spoken result is not a reason to
-                     * shut down the microphone.
-                     */
-                    return;
-                }
-
                 /*
-                 * For a real recognizer failure we restart the
-                 * recognizer using the still-available microphone
-                 * stream.
+                 * A recognition error ends the current recognizer
+                 * session on many Android implementations, including
+                 * ERROR_NO_MATCH. Keep the AudioRecord alive, but
+                 * recreate the recognizer so hands-free listening does
+                 * not silently die after one empty/failed segment.
                  */
-                handler.postDelayed(
-                        () -> {
-
-                            if (running) {
-
-                                restartRecognizerOnly();
-                            }
-
-                        },
-                        RESTART_MS
-                );
+                restartRecognizerOnly();
             }
 
             @Override
@@ -976,9 +959,11 @@ public final class NovaVoiceService extends Service {
 
     private void restartRecognizerOnly() {
 
-        if (!running) {
+        if (!running || restartScheduled) {
             return;
         }
+
+        restartScheduled = true;
 
         Log.d(
                 TAG,
@@ -995,9 +980,11 @@ public final class NovaVoiceService extends Service {
                 () -> {
 
                     if (!running) {
+                        restartScheduled = false;
                         return;
                     }
 
+                    restartScheduled = false;
                     startRecognizerFromExistingAudio();
 
                 },
@@ -1085,6 +1072,7 @@ public final class NovaVoiceService extends Service {
             );
 
             recognizerRunning = true;
+            restartScheduled = false;
 
         } catch (Exception e) {
 
@@ -1095,6 +1083,7 @@ public final class NovaVoiceService extends Service {
             );
 
             recognizerRunning = false;
+            restartScheduled = false;
 
             destroyRecognizer();
 
@@ -1625,16 +1614,22 @@ public final class NovaVoiceService extends Service {
 
     private void scheduleRestart() {
 
-        if (!running) {
+        if (!running || restartScheduled) {
             return;
         }
+
+        restartScheduled = true;
 
         handler.postDelayed(
                 () -> {
 
-                    if (running) {
-                        startContinuousVoice();
+                    if (!running) {
+                        restartScheduled = false;
+                        return;
                     }
+
+                    restartScheduled = false;
+                    startContinuousVoice();
 
                 },
                 RESTART_MS
@@ -1849,6 +1844,7 @@ public final class NovaVoiceService extends Service {
         running = false;
 
         recognizerRunning = false;
+        restartScheduled = false;
 
         destroyRecognizer();
 

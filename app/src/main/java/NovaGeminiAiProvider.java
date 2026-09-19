@@ -1,0 +1,146 @@
+package com.aircontrol;
+
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+/** Gemini cloud provider. Requests are isolated so one slow request cannot queue every later conversation. */
+public final class NovaGeminiAiProvider implements NovaAiProvider {
+    private static final String TAG = "NovaGeminiAI";
+    private static final String DEFAULT_MODEL = "gemini-3.8-flash";
+    private static final String BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int READ_TIMEOUT_MS = 30000;
+
+    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final Handler main = new Handler(Looper.getMainLooper());
+
+    @Override public String getId() { return "gemini"; }
+
+    @Override
+    public void chat(String endpoint, String apiKey, String model, JSONArray messages, Callback callback) {
+        if (callback == null) return;
+        executor.execute(() -> {
+            final long started = System.currentTimeMillis();
+            HttpURLConnection connection = null;
+            try {
+                String key = apiKey == null ? "" : apiKey.trim();
+                if (key.isEmpty()) key = BuildConfig.GEMINI_API_KEY == null ? "" : BuildConfig.GEMINI_API_KEY.trim();
+                if (key.isEmpty()) throw new IllegalArgumentException("Gemini API key is not configured");
+
+                String selectedModel = model == null ? "" : model.trim();
+                if (selectedModel.isEmpty() || selectedModel.startsWith("gpt-")) selectedModel = DEFAULT_MODEL;
+                String urlText = BASE_URL + selectedModel + ":generateContent";
+                Log.d(TAG, "REQUEST START model=" + selectedModel + " messages=" + (messages == null ? 0 : messages.length()));
+
+                connection = (HttpURLConnection) new URL(urlText).openConnection();
+                connection.setRequestMethod("POST");
+                connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+                connection.setReadTimeout(READ_TIMEOUT_MS);
+                connection.setDoOutput(true);
+                connection.setUseCaches(false);
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                connection.setRequestProperty("Accept", "application/json");
+                connection.setRequestProperty("x-goog-api-key", key);
+
+                JSONObject body = new JSONObject();
+                JSONArray contents = new JSONArray();
+                JSONArray systemParts = new JSONArray();
+                if (messages != null) {
+                    for (int i = 0; i < messages.length(); i++) {
+                        JSONObject message = messages.optJSONObject(i);
+                        if (message == null) continue;
+                        String role = message.optString("role", "user");
+                        String content = message.optString("content", "");
+                        if (content.isEmpty()) continue;
+                        if ("system".equals(role)) {
+                            systemParts.put(new JSONObject().put("text", content));
+                            continue;
+                        }
+                        JSONObject item = new JSONObject();
+                        item.put("role", "assistant".equals(role) ? "model" : "user");
+                        item.put("parts", new JSONArray().put(new JSONObject().put("text", content)));
+                        contents.put(item);
+                    }
+                }
+                if (systemParts.length() > 0) body.put("systemInstruction", new JSONObject().put("parts", systemParts));
+                body.put("contents", contents);
+
+                byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+                connection.setFixedLengthStreamingMode(bytes.length);
+                try (java.io.OutputStream out = connection.getOutputStream()) { out.write(bytes); }
+
+                long sent = System.currentTimeMillis();
+                int code = connection.getResponseCode();
+                long headers = System.currentTimeMillis();
+                InputStream stream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
+                String response = readAll(stream);
+                long read = System.currentTimeMillis();
+                Log.d(TAG, "REQUEST TIMING upload=" + (sent - started) + "ms headers=" + (headers - sent) + "ms body=" + (read - headers) + "ms total=" + (read - started) + "ms code=" + code);
+
+                if (code < 200 || code >= 300) throw new IllegalStateException("Gemini HTTP " + code + ": " + compact(response));
+                String text = extractText(new JSONObject(response)).trim();
+                if (text.isEmpty()) throw new IllegalStateException("Gemini returned no text");
+                main.post(() -> callback.onResult(text));
+            } catch (java.net.SocketTimeoutException e) {
+                long elapsed = System.currentTimeMillis() - started;
+                Log.w(TAG, "REQUEST TIMEOUT after " + elapsed + "ms", e);
+                main.post(() -> callback.onError("Gemini request timed out after " + elapsed + " ms."));
+            } catch (Exception e) {
+                long elapsed = System.currentTimeMillis() - started;
+                String message = e.getMessage() == null ? "Gemini request failed" : e.getMessage();
+                Log.e(TAG, "REQUEST FAILED after " + elapsed + "ms: " + message, e);
+                main.post(() -> callback.onError(message));
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        });
+    }
+
+    private String extractText(JSONObject json) {
+        JSONArray candidates = json.optJSONArray("candidates");
+        if (candidates == null || candidates.length() == 0) return "";
+        JSONObject candidate = candidates.optJSONObject(0);
+        JSONObject content = candidate == null ? null : candidate.optJSONObject("content");
+        JSONArray parts = content == null ? null : content.optJSONArray("parts");
+        if (parts == null) return "";
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < parts.length(); i++) {
+            JSONObject part = parts.optJSONObject(i);
+            if (part != null) result.append(part.optString("text", ""));
+        }
+        return result.toString();
+    }
+
+    private String compact(String value) {
+        if (value == null) return "";
+        String cleaned = value.replaceAll("\\s+", " ").trim();
+        return cleaned.length() > 500 ? cleaned.substring(0, 500) + "…" : cleaned;
+    }
+
+    private String readAll(InputStream stream) throws Exception {
+        if (stream == null) return "";
+        StringBuilder builder = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) builder.append(line);
+        }
+        return builder.toString();
+    }
+
+    @Override public void shutdown() {
+        executor.shutdownNow();
+        try { executor.awaitTermination(1, TimeUnit.SECONDS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+    }
+}

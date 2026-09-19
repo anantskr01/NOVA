@@ -1,0 +1,3 @@
+# Copy this file to gemini.properties and add your private Gemini API key.
+# gemini.properties is ignored by Git and must never be committed.
+GEMINI_API_KEY=

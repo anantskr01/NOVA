@@ -287,10 +287,6 @@ public final class NovaAgentPlanner {
                                        String beforePackage, String afterPackage) {
         if (after == null || after.isEmpty()) return false;
 
-        if ("type_text".equals(type)) {
-            return true;
-        }
-
         if (("open_app".equals(type) || "open_package".equals(type) || "open_url".equals(type))
                 && !afterPackage.isEmpty()
                 && !afterPackage.equals(beforePackage)) {
@@ -298,14 +294,22 @@ public final class NovaAgentPlanner {
         }
 
         if (before.isEmpty()) return true;
-        if (!after.equals(before)) return true;
+        if (!after.equals(before)) {
+            if ("type_text".equals(type)) {
+                String normalizedValue = value.replaceAll("\\s+", " ").trim().toLowerCase();
+                String normalizedAfter = after.replaceAll("\\s+", " ").trim().toLowerCase();
+                if (normalizedValue.isEmpty()) return true;
+                return normalizedAfter.contains(normalizedValue) || normalizedAfter.contains(value.toLowerCase());
+            }
+            return true;
+        }
 
         if ("click_text".equals(type) && !value.isEmpty()) {
             String a = after.toLowerCase();
             return a.contains(value.toLowerCase()) && (a.contains("clickable=true") || a.contains("focusable=true"));
         }
 
-        return false;
+        return "type_text".equals(type) && !value.isEmpty() && after.toLowerCase().contains(value.toLowerCase());
     }
 
     private String screen() {

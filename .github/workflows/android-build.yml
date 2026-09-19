@@ -9,7 +9,13 @@ on:
       - phase-2-universal-tools
       - consolidate/**
   pull_request:
+    branches:
+      - main
   workflow_dispatch:
+
+concurrency:
+  group: nova-android-build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

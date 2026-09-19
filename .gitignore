@@ -1,9 +1,14 @@
-﻿.gradle/
+.gradle/
 build/
 **/build/
 local.properties
+gemini.properties
 .idea/
 *.iml
 .DS_Store
 .externalNativeBuild/
 .cxx/
+
+# Local build/tooling caches
+.kotlin/
+pc-companion/bin/
