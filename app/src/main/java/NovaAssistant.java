@@ -30,7 +30,7 @@ public final class NovaAssistant {
         memory = new NovaMemory(this.context); secureStore = new NovaSecureStore(this.context); apps = new NovaAppCatalog(this.context);
         actions = new NovaActionEngine(this.context, new NovaActionEngine.Callback() { public void status(String text) { NovaAssistant.this.status(text); } public void reply(String text) { NovaAssistant.this.say(text); } });
         brain = new NovaBrain(this.context, actions, memory, new NovaBrain.Listener() { public void onStatus(String text) { NovaAssistant.this.status(text); } public void onReply(String text) { NovaAssistant.this.say(text); } });
-        taskManager = new NovaTaskManager(brain); configurePcAgentFromPrefs(); conversation = new NovaConversationService(this.context, memory);
+        taskManager = new NovaTaskManager(brain, this.context); configurePcAgentFromPrefs(); conversation = new NovaConversationService(this.context, memory);
         skills = new NovaSkillRegistry(this.context, new NovaSkillRegistry.Callback() { public void reply(String text) { NovaAssistant.this.say(text); } public void status(String text) { NovaAssistant.this.status(text); } }, taskManager);
         tts = new TextToSpeech(this.context, result -> { if (result == TextToSpeech.SUCCESS) try { tts.setLanguage(Locale.getDefault()); } catch (Exception ignored) {} });
     }
