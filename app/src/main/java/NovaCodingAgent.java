@@ -16,7 +16,9 @@ public final class NovaCodingAgent {
     public interface Listener { void onStatus(String text); void onFinished(boolean success, String summary); }
 
     private static final int MAX_ITERATIONS = 8;
-    private static final long MODEL_TIMEOUT_MS = 60_000L;
+    // Keep the coding-agent model budget inside NovaAgentPolicy.MAX_TASK_MILLIS (120s),
+    // while allowing cold local-model load/inference to complete before declaring a timeout.
+    private static final long MODEL_TIMEOUT_MS = 110_000L;
     private static final int MAX_CONTEXT_CHARS = 120_000;
 
     private final NovaAiProvider provider;
@@ -169,7 +171,7 @@ public final class NovaCodingAgent {
             while (!holder.done) {
                 if (cancelled.get()) throw new InterruptedException("coding agent cancelled");
                 long remaining = deadline - System.currentTimeMillis();
-                if (remaining <= 0) throw new IOException("AI response timed out");
+                if (remaining <= 0) throw new IOException("AI response timed out after " + MODEL_TIMEOUT_MS + " ms");
                 holder.wait(remaining);
             }
         }
