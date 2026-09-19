@@ -64,6 +64,38 @@ public final class NovaCodingAgent {
             String prompt = buildPrompt(goal, workspace, build, settings);
             boolean verified = false;
 
+            // Simple file-creation requests are deterministic and should not wait for
+            // a local/remote model to produce JSON. This keeps basic PC-agent work fast.
+            JSONObject directFilePlan = deterministicFilePlan(goal);
+            if (directFilePlan != null) {
+                checkCancelled();
+                String path = validatePath(directFilePlan.optString("path", ""));
+                String content = directFilePlan.optString("content", "");
+                if (content.isEmpty()) {
+                    finish(listener, false, "Coding agent received an empty file request.");
+                    return;
+                }
+                status(listener, "CODING AGENT • DIRECT FILE WRITE • " + path);
+                pc.writeFile(path, content);
+                checkCancelled();
+
+                String readBack = pc.readFile(path);
+                if (!content.equals(readBack)) {
+                    finish(listener, false, "PC agent wrote the file, but read-back verification did not match: " + path);
+                    return;
+                }
+
+                NovaPcAgent.ProcessResult check = pc.runAllowed("git diff --check");
+                if (check.exitCode() != 0) {
+                    finish(listener, false, "File was created, but git diff --check failed: " + check.output());
+                    return;
+                }
+
+                NovaPcAgent.ProcessResult statusCheck = pc.runAllowed("git status --short --branch");
+                finish(listener, true, "Created and verified: " + path + "\\n" + statusCheck.output());
+                return;
+            }
+
             for (int iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
                 checkCancelled();
                 status(listener, "CODING AGENT • ITERATION " + iteration + "/" + MAX_ITERATIONS);
