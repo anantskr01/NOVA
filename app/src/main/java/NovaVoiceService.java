@@ -1071,7 +1071,7 @@ public final class NovaVoiceService extends Service {
                     input
             );
 
-                recognizerRunning = true;
+            recognizerRunning = true;
             restartScheduled = false;
 
         } catch (Exception e) {
