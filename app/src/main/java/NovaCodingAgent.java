@@ -69,7 +69,14 @@ public final class NovaCodingAgent {
                 status(listener, "CODING AGENT • ITERATION " + iteration + "/" + MAX_ITERATIONS);
                 String raw = askModel(prompt);
                 checkCancelled();
-                JSONObject plan = parsePlan(raw);
+                JSONObject plan;
+                try {
+                    plan = parsePlan(raw);
+                } catch (IOException parseError) {
+                    plan = deterministicFilePlan(goal);
+                    if (plan == null) throw parseError;
+                    status(listener, "CODING AGENT • USING DETERMINISTIC FILE PLAN");
+                }
                 String action = plan.optString("action", "");
 
                 if ("finish".equals(action)) {
@@ -229,6 +236,30 @@ public final class NovaCodingAgent {
         return new JSONObject(text.substring(start, end + 1));
     }
 
+    /**
+     * Handles simple, unambiguous file-creation requests without depending on a model
+     * to obey the JSON-only contract. Complex coding goals still require a structured plan.
+     */
+    private static JSONObject deterministicFilePlan(String goal) {
+        if (goal == null) return null;
+        String trimmed = goal.trim();
+        java.util.regex.Matcher name = java.util.regex.Pattern
+                .compile("(?i)\\b(?:create|make|add|write)\\s+(?:a|an|the)?\\s*(?:new\\s+)?file\\s+(?:named|called)\\s*[`\\\"]?([^`\\\"\\s]+)")
+                .matcher(trimmed);
+        java.util.regex.Matcher content = java.util.regex.Pattern
+                .compile("(?i)\\bcontaining\\s+(.+)$")
+                .matcher(trimmed);
+        if (!name.find() || !content.find()) return null;
+        String path = name.group(1).trim();
+        String text = content.group(1).trim();
+        if (path.isEmpty() || text.isEmpty()) return null;
+        try {
+            validatePath(path);
+            return new JSONObject().put("action", "write").put("path", path).put("content", text);
+        } catch (Exception e) {
+            return null;
+        }
+    }
     private static String validatePath(String path) throws IOException {
         if (path == null || path.isBlank() || path.startsWith("/") || path.startsWith("\\") || path.contains("..") || path.contains(":") || path.contains("\\")) {
             throw new IOException("Blocked unsafe workspace path");
