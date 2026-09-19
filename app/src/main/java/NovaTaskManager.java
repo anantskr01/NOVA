@@ -106,7 +106,7 @@ public final class NovaTaskManager {
     private void pumpLocked() {
         if (shutdown || brain == null) return;
         if (active != null) {
-            if (active.startedAt > 0 && System.currentTimeMillis() - active.startedAt > NovaAgentPolicy.MAX_TASK_MILLIS + 5_000L) {
+            if (active.startedAt > 0 && System.currentTimeMillis() - active.startedAt > (active.external != null ? NovaAgentPolicy.MAX_CODING_TASK_MILLIS : NovaAgentPolicy.MAX_TASK_MILLIS) + 5_000L) {
                 Task timedOut = active;
                 timedOut.status = FAILED;
                 timedOut.finishedAt = System.currentTimeMillis();
