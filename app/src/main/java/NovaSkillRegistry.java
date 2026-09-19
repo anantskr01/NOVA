@@ -120,11 +120,23 @@ public final class NovaSkillRegistry {
     }
 
     private boolean isCodingGoal(String command) {
-        return command.startsWith("code ") || command.startsWith("implement ") || command.startsWith("fix code ")
-                || command.startsWith("fix the code") || command.startsWith("debug ") || command.startsWith("refactor ")
-                || command.startsWith("modify the code") || command.startsWith("update the code")
-                || command.startsWith("build the project") || command.startsWith("make the project")
-                || command.contains("in my nova project") || command.contains("in the nova repo");
+        if (command == null) return false;
+        String c = command.trim().toLowerCase(Locale.ROOT);
+        return c.startsWith("code ") || c.startsWith("implement ") || c.startsWith("fix code ")
+                || c.startsWith("fix the code") || c.startsWith("debug ") || c.startsWith("refactor ")
+                || c.startsWith("modify the code") || c.startsWith("update the code")
+                || c.startsWith("build the project") || c.startsWith("make the project")
+                || c.startsWith("create a file ") || c.startsWith("create file ")
+                || c.startsWith("create a new file ") || c.startsWith("create new file ")
+                || c.startsWith("make a file ") || c.startsWith("make a new file ")
+                || c.startsWith("write a file ") || c.startsWith("write to a file ")
+                || c.startsWith("add a file ") || c.startsWith("add file ")
+                || c.startsWith("edit a file ") || c.startsWith("edit file ")
+                || c.startsWith("modify a file ") || c.startsWith("modify file ")
+                || c.startsWith("update a file ") || c.startsWith("update file ")
+                || c.contains("create a file named ") || c.contains("create file named ")
+                || c.contains("in my nova project") || c.contains("in the nova repo")
+                || c.contains("in the project workspace");
     }
 
     private boolean startCodingAgent(String goal) {
