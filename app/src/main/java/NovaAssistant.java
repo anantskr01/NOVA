@@ -102,7 +102,48 @@ public final class NovaAssistant {
     private int parsePriority(String c) { if (c.startsWith("urgent ") || c.startsWith("critical ") || c.startsWith("high priority ")) return NovaTaskManager.PRIORITY_HIGH; if (c.startsWith("low priority ") || c.startsWith("when you can ") || c.startsWith("later ")) return NovaTaskManager.PRIORITY_LOW; return NovaTaskManager.PRIORITY_NORMAL; }
     private String stripPriorityPrefix(String original, String lower) { String[] prefixes = {"urgent ", "critical ", "high priority ", "low priority ", "when you can ", "later "}; for (String prefix : prefixes) if (lower.startsWith(prefix)) return original.substring(prefix.length()).trim(); return original.trim(); }
     private void executeLocal(String type, String success) { boolean ok = actions.execute(type, ""); say(ok ? success : "I couldn't perform that action. Check the required Android permission."); }
-    private boolean handleMemory(String c, String original) { if (c.equals("forget everything") || c.equals("clear memory") || c.equals("delete my memory")) { memory.clear(); context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().clear().apply(); taskManager.cancelAll(); say("Local NOVA memory has been cleared."); return true; } if (c.startsWith("remember ")) { String note = original.substring(9).trim(); if (!note.isEmpty()) { int as = note.toLowerCase(Locale.ROOT).indexOf(" as "); if (as > 0 && as + 4 < note.length()) memory.rememberFact(note.substring(as + 4).trim(), note.substring(0, as).trim()); else { context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().putString("note", note).apply(); memory.rememberFact("note", note); } say("I'll remember that locally on this tablet."); return true; } } if (containsAny(c, "what do you remember", "what do you know about me")) { String note = memory.factsSummary(); if (note.equals("No saved facts.")) note = context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).getString("note", note); say(note); return true; } return false; }
+    private boolean handleMemory(String c, String original) {
+        if (c.equals("forget everything") || c.equals("clear memory") || c.equals("delete my memory")) {
+            memory.clear();
+            context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE).edit().clear().apply();
+            taskManager.cancelAll();
+            say("Local NOVA memory has been cleared.");
+            return true;
+        }
+        if (c.startsWith("forget ") || c.startsWith("delete memory ")) {
+            String key = c.startsWith("forget ") ? original.substring(7).trim() : original.substring(14).trim();
+            if (!key.isEmpty()) {
+                boolean removed = memory.forgetFact(key);
+                say(removed ? "Forgot that saved memory." : "I couldn't find a saved memory with that name.");
+                return true;
+            }
+        }
+        if (c.startsWith("remember ")) {
+            String note = original.substring(9).trim();
+            if (!note.isEmpty()) {
+                int as = note.toLowerCase(Locale.ROOT).indexOf(" as ");
+                if (as > 0 && as + 4 < note.length()) {
+                    memory.rememberFact(note.substring(as + 4).trim(), note.substring(0, as).trim());
+                } else {
+                    context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE)
+                            .edit().putString("note", note).apply();
+                    memory.rememberFact("note", note);
+                }
+                say("I'll remember that locally on this tablet.");
+                return true;
+            }
+        }
+        if (containsAny(c, "what do you remember", "what do you know about me")) {
+            String note = memory.factsSummary();
+            if (note.equals("No saved facts.")) {
+                note = context.getSharedPreferences("nova_user_memory", Context.MODE_PRIVATE)
+                        .getString("note", note);
+            }
+            say(note);
+            return true;
+        }
+        return false;
+    }
     private boolean openByName(String name) { if (name.isEmpty()) return false; if (name.toLowerCase(Locale.ROOT).contains("youtube")) return actions.execute("open_app", "YouTube"); android.content.pm.ResolveInfo info = apps.resolve(name); Intent launchIntent = apps.launchIntent(info); if (launchIntent != null) { launch(launchIntent); say("Opening " + info.loadLabel(context.getPackageManager()) + "."); return true; } return false; }
     private void search(String query) { status("WEB RESEARCH • " + query); web.search(query, new NovaWebTool.Callback() { public void onResult(String text) { say(text); } public void onError(String error) { if (!actions.execute("search", query)) { say("I couldn't open the search results."); return; } say("I opened the search results."); } }); }
     private String getUiSnapshot() { GestureAccessibilityService service = GestureAccessibilityService.getInstance(); return service == null ? "Accessibility access is not connected." : service.getUiSnapshot(); }
