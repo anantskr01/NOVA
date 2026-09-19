@@ -327,20 +327,30 @@ public final class NovaTaskManager {
                 task.startedAt = Math.max(0L, o.optLong("startedAt", 0L));
                 task.finishedAt = Math.max(0L, o.optLong("finishedAt", 0L));
 
+                boolean wasExternal = o.optBoolean("external", false);
                 if (RUNNING.equals(status)) {
-                    // A process restart cannot safely resume an external agent instance.
-                    // Brain goals are safe to requeue because NovaBrain owns their live state.
-                    status = QUEUED;
-                    task.startedAt = 0L;
-                    task.finishedAt = 0L;
-                    queue.offer(task);
+                    // An Android process restart cannot safely resume an external agent instance.
+                    // Brain goals can be requeued because NovaBrain owns their live state.
+                    if (wasExternal) {
+                        task.status = FAILED;
+                        task.finishedAt = System.currentTimeMillis();
+                    } else {
+                        task.status = QUEUED;
+                        task.startedAt = 0L;
+                        task.finishedAt = 0L;
+                        queue.offer(task);
+                    }
                 } else if (QUEUED.equals(status)) {
-                    queue.offer(task);
-                }
-                task.status = status;
-                if (COMPLETED.equals(status) || FAILED.equals(status) || CANCELLED.equals(status)) {
+                    if (wasExternal) {
+                        task.status = FAILED;
+                        task.finishedAt = System.currentTimeMillis();
+                    } else {
+                        task.status = QUEUED;
+                        queue.offer(task);
+                    }
+                } else if (COMPLETED.equals(status) || FAILED.equals(status) || CANCELLED.equals(status)) {
                     task.status = status;
-                } else if (!QUEUED.equals(status)) {
+                } else {
                     continue;
                 }
                 tasks.put(id, task);
